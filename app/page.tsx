@@ -6,6 +6,7 @@ import { useNeuro } from "@/components/store";
 import ControlPanel from "@/components/ControlPanel";
 import StatsPanel from "@/components/StatsPanel";
 import Legend from "@/components/Legend";
+import VitalsPanel from "@/components/VitalsPanel";
 
 // El Canvas usa WebGL: solo en cliente.
 const Scene = dynamic(() => import("@/components/Scene"), { ssr: false });
@@ -26,6 +27,7 @@ export default function Page() {
       <ControlPanel />
       <StatsPanel />
       <Legend />
+      <VitalsPanel />
 
       {!engine && <div className="building">Construyendo el cerebro…</div>}
       {building && <div className="building">Reconstruyendo la red neuronal…</div>}

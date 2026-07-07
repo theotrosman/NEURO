@@ -83,6 +83,13 @@ body {
   width: 250px;
 }
 
+.panel-vitals {
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 320px;
+}
+
 .section {
   margin: 14px 0 6px;
   font-size: 11px;

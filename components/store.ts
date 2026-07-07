@@ -48,6 +48,9 @@ interface NeuroState {
   toggle: (key: "showNeurons" | "showTracts" | "showPulses" | "showBody") => void;
   setParam: (key: "density" | "gain" | "noise" | "seed", v: number) => void;
   stimulate: (region: string, current?: number) => void;
+  feed: () => void;
+  giveWater: () => void;
+  toggleSleep: () => void;
   setSelected: (id: number | null) => void;
   setStats: (s: EngineStats) => void;
 }
@@ -77,6 +80,8 @@ export const useNeuro = create<NeuroState>((set, get) => ({
   build: () => {
     const { seed, density, gain, noise } = get();
     const engine = new SimulationEngine({ seed, density, gain, noiseStd: noise });
+    // Acceso de depuracion desde consola: window.__neuro.update(4), etc.
+    if (typeof window !== "undefined") (window as unknown as { __neuro: unknown }).__neuro = engine;
     set((s) => ({ engine, buildVersion: s.buildVersion + 1, selected: null }));
   },
 
@@ -88,6 +93,7 @@ export const useNeuro = create<NeuroState>((set, get) => ({
     // setTimeout para permitir que la UI muestre el estado "building".
     setTimeout(() => {
       const engine = new SimulationEngine({ seed, density, gain, noiseStd: noise });
+      if (typeof window !== "undefined") (window as unknown as { __neuro: unknown }).__neuro = engine;
       set((s) => ({
         engine,
         buildVersion: s.buildVersion + 1,
@@ -106,6 +112,10 @@ export const useNeuro = create<NeuroState>((set, get) => ({
   stimulate: (region, current = 45) => {
     get().engine?.stimulateRegion(region, current);
   },
+
+  feed: () => get().engine?.feed(),
+  giveWater: () => get().engine?.giveWater(),
+  toggleSleep: () => get().engine?.toggleSleep(),
 
   setSelected: (id) => set({ selected: id }),
   setStats: (s) => set({ stats: s }),

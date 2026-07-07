@@ -112,6 +112,12 @@ export const REGIONS: BrainRegion[] = [
     count: 120, types: [["dopaminergic", 0.8], ["basket_FS", 0.2]],
   },
   {
+    name: "hypothalamus", label: "Hipotalamo (homeostasis)", color: "#ffb03c",
+    space: "brain", center: [0, -1.0, 0.5], extent: [1.0, 0.5, 0.7], shell: false,
+    count: 150,
+    types: [["pyramidal_RS", 0.65], ["basket_FS", 0.2], ["martinotti_LTS", 0.15]],
+  },
+  {
     name: "cerebellum", label: "Cerebelo (coordinacion)", color: "#b06cff",
     space: "brain", center: [0, -2.4, -3.9], extent: [3.0, 1.3, 1.3], shell: true,
     count: 620,

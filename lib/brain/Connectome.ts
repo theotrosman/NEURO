@@ -30,6 +30,7 @@ export const PROJECTIONS: Projection[] = [
   L("temporal_L", 12, 3.0), L("temporal_R", 12, 3.0),
   L("thalamus", 8, 2.6), L("hippocampus", 12, 3.2),
   L("amygdala", 10, 3.2), L("basal_ganglia", 12, 3.4),
+  L("hypothalamus", 8, 3.0),
   L("cerebellum", 10, 2.8), L("brainstem", 8, 2.8),
   L("spinal_cord", 6, 2.6),
 
@@ -81,6 +82,12 @@ export const PROJECTIONS: Projection[] = [
   // --- Neuromodulacion dopaminergica ---
   { from: "substantia_nigra", to: "basal_ganglia", fanout: 8, weightMean: 3.0, weightStd: 1 },
   { from: "substantia_nigra", to: "prefrontal", fanout: 5, weightMean: 2.0, weightStd: 0.8 },
+
+  // --- Homeostasis: el hipotalamo traduce las pulsiones internas en conducta ---
+  { from: "hypothalamus", to: "amygdala", fanout: 5, weightMean: 3.2, weightStd: 1 },
+  { from: "hypothalamus", to: "prefrontal", fanout: 5, weightMean: 2.8, weightStd: 1 },
+  { from: "hypothalamus", to: "brainstem", fanout: 5, weightMean: 3.0, weightStd: 1 },
+  { from: "hypothalamus", to: "substantia_nigra", fanout: 4, weightMean: 2.6, weightStd: 1 },
 ];
 
 const CONDUCTION_VELOCITY = 1.6; // unidades de escena por ms
