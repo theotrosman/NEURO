@@ -1,11 +1,16 @@
 import { Network, NetworkOptions } from "../brain/Network";
 import { MotorSystem, MuscleChannel } from "../body/MotorSystem";
 import { Physiology, PhysiologyState } from "../body/Physiology";
+import { Agent, AgentState } from "../body/Agent";
+import { Environment, WorldState } from "../world/Environment";
 import { SignalField } from "./SignalField";
 import { DT } from "./constants";
 
 // Presupuesto de pulsos visuales generados por fotograma (evita saturar).
 const SPAWN_BUDGET = 70;
+
+// A que distancia (unidades) el cuerpo alcanza y consume un recurso.
+const REACH = 4;
 
 export interface EngineStats {
   neurons: number;
@@ -21,6 +26,8 @@ export class SimulationEngine {
   motor: MotorSystem;
   signals: SignalField;
   physiology: Physiology;
+  agent: Agent;
+  world: Environment;
 
   private lastFrameSpikes = 0;
   private firingHzEma = 0;
@@ -30,6 +37,8 @@ export class SimulationEngine {
     this.network = new Network(opts);
     this.motor = new MotorSystem(this.network);
     this.physiology = new Physiology();
+    this.agent = new Agent();
+    this.world = new Environment(opts.seed ?? 20260706);
     this.signals = new SignalField();
   }
 
@@ -91,6 +100,15 @@ export class SimulationEngine {
       Math.max(0, p.hunger() - 0.82) * 3 +
       Math.max(0, p.thirst() - 0.82) * 3;
     if (distress > 0.05) net.stimulateRegion("amygdala", distress * 10);
+
+    // --- Mundo y cuerpo en el espacio ---
+    this.world.update(simMs);
+    this.agent.integrate(simMs);
+    // Si el cuerpo llega a un recurso, lo consume: comer sube energia, beber
+    // sube hidratacion; ambos disparan recompensa (dopamina) via feed/giveWater.
+    const got = this.world.consumeAt(this.agent.x, this.agent.z, REACH);
+    if (got === "food") this.feed();
+    else if (got === "water") this.giveWater();
   }
 
   // Consumir alimento: sube energia y dispara recompensa (dopamina).
@@ -113,6 +131,14 @@ export class SimulationEngine {
 
   physiologySnapshot(): PhysiologyState {
     return this.physiology.snapshot();
+  }
+
+  worldSnapshot(): WorldState {
+    return this.world.snapshot();
+  }
+
+  agentSnapshot(): AgentState {
+    return this.agent.snapshot();
   }
 
   stimulateRegion(name: string, current: number): void {

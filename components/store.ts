@@ -34,6 +34,7 @@ interface NeuroState {
   showTracts: boolean;
   showPulses: boolean;
   showBody: boolean;
+  showWorld: boolean;
 
   // Interaccion.
   selected: number | null;
@@ -45,7 +46,9 @@ interface NeuroState {
   togglePlay: () => void;
   setSpeed: (v: number) => void;
   setColorMode: (m: ColorMode) => void;
-  toggle: (key: "showNeurons" | "showTracts" | "showPulses" | "showBody") => void;
+  toggle: (
+    key: "showNeurons" | "showTracts" | "showPulses" | "showBody" | "showWorld"
+  ) => void;
   setParam: (key: "density" | "gain" | "noise" | "seed", v: number) => void;
   stimulate: (region: string, current?: number) => void;
   feed: () => void;
@@ -73,6 +76,7 @@ export const useNeuro = create<NeuroState>((set, get) => ({
   showTracts: true,
   showPulses: true,
   showBody: true,
+  showWorld: true,
 
   selected: null,
   stats: { neurons: 0, synapses: 0, timeMs: 0, firingHz: 0, activePulses: 0 },

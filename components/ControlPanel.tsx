@@ -71,6 +71,9 @@ export default function ControlPanel() {
         <button className={s.showBody ? "active" : ""} onClick={() => s.toggle("showBody")}>
           Cuerpo
         </button>
+        <button className={s.showWorld ? "active" : ""} onClick={() => s.toggle("showWorld")}>
+          Mundo
+        </button>
       </div>
 
       <div className="section">Estimular (inyectar corriente)</div>
