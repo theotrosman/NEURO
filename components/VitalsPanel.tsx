@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useNeuro } from "./store";
 import { PhysiologyState } from "../lib/body/Physiology";
+import { Perception } from "../lib/body/Senses";
 
 const NEED_LABEL: Record<string, string> = {
   hunger: "Hambre",
@@ -10,6 +11,19 @@ const NEED_LABEL: Record<string, string> = {
   tiredness: "Sueño",
   none: "Saciado",
 };
+
+const KIND_LABEL: Record<string, string> = { food: "comida", water: "agua" };
+
+// Traduce el estado interno + lo que percibe en una frase de conducta legible.
+function behaviorLabel(p: PhysiologyState, perc: Perception | null): string {
+  if (!p.alive) return "Sin vida";
+  if (p.asleep) return "Durmiendo";
+  const seesWanted = !!perc?.sees;
+  if (p.need === "hunger") return seesWanted ? "Yendo por comida" : "Buscando comida";
+  if (p.need === "thirst") return seesWanted ? "Yendo por agua" : "Buscando agua";
+  if (p.need === "tiredness") return "Agotado, necesita dormir";
+  return "Explorando el entorno";
+}
 
 // Panel de signos vitales: muestra el estado homeostatico del organismo en
 // tiempo real y permite interactuar con sus necesidades.
@@ -19,10 +33,14 @@ export default function VitalsPanel() {
   const giveWater = useNeuro((s) => s.giveWater);
   const toggleSleep = useNeuro((s) => s.toggleSleep);
   const [p, setP] = useState<PhysiologyState | null>(null);
+  const [perc, setPerc] = useState<Perception | null>(null);
 
   useEffect(() => {
     if (!engine) return;
-    const id = setInterval(() => setP(engine.physiologySnapshot()), 120);
+    const id = setInterval(() => {
+      setP(engine.physiologySnapshot());
+      setPerc(engine.perceptionSnapshot());
+    }, 120);
     return () => clearInterval(id);
   }, [engine]);
 
@@ -47,6 +65,20 @@ export default function VitalsPanel() {
         <span className="k">Pulsión</span>
         <span className="v">{NEED_LABEL[p.need]}</span>
       </div>
+      <div className="stat">
+        <span className="k">Conducta</span>
+        <span className="v" style={{ color: "var(--accent-2)" }}>
+          {behaviorLabel(p, perc)}
+        </span>
+      </div>
+      {perc?.sees && perc.kind && (
+        <div className="stat">
+          <span className="k">Ve</span>
+          <span className="v">
+            {KIND_LABEL[perc.kind]} a {perc.distance.toFixed(0)}u
+          </span>
+        </div>
+      )}
       <div className="stat">
         <span className="k">Recompensa</span>
         <span

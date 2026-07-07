@@ -26,12 +26,16 @@ export interface PhysiologyState {
 
 // --- Tasas por milisegundo de simulacion (ajustadas para un demo observable:
 //     una necesidad pasa de saciada a urgente en decenas de segundos sim). ---
-const BASE_METAB = 0.0000135; // gasto energetico basal
-const MOVE_METAB = 0.000045; // gasto extra por locomocion/esfuerzo
-const NEURAL_METAB = 0.000006; // el cerebro consume energia al disparar
-const HYDRO_RATE = 0.0000105; // perdida de agua
-const FATIGUE_RATE = 0.0000075; // cansancio por estar despierto
-const FATIGUE_MOVE = 0.00002; // cansancio extra por moverse
+// Ajustadas para que el organismo pueda CRUZAR el terreno hasta un recurso y
+// alimentarse de forma sostenible (una comida rinde ~0.35 de energia): forrajear
+// no debe costar mas de lo que aporta. Aun asi una necesidad pasa de saciada a
+// urgente en ~30 s de simulacion en reposo.
+const BASE_METAB = 0.000008; // gasto energetico basal
+const MOVE_METAB = 0.00002; // gasto extra por locomocion/esfuerzo
+const NEURAL_METAB = 0.000003; // el cerebro consume energia al disparar
+const HYDRO_RATE = 0.000007; // perdida de agua
+const FATIGUE_RATE = 0.000005; // cansancio por estar despierto
+const FATIGUE_MOVE = 0.000012; // cansancio extra por moverse
 const SLEEP_RECOVERY = 0.00008; // recuperacion de fatiga durmiendo
 const HEALTH_LOSS = 0.00006; // dano por deficit critico
 const HEALTH_REGEN = 0.0000075; // curacion lenta si todo esta bien

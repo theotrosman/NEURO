@@ -61,6 +61,11 @@ export class Agent {
     return Math.abs(this.speed) > 0.15;
   }
 
+  // Esfuerzo locomotor normalizado 0..1 (para el gasto metabolico).
+  get effort(): number {
+    return Math.min(1, Math.abs(this.speed) / MAX_SPEED);
+  }
+
   snapshot(): AgentState {
     return {
       x: this.x,

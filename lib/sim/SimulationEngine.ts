@@ -3,6 +3,7 @@ import { MotorSystem, MuscleChannel } from "../body/MotorSystem";
 import { Physiology, PhysiologyState } from "../body/Physiology";
 import { Agent, AgentState } from "../body/Agent";
 import { Environment, WorldState } from "../world/Environment";
+import { perceive, Perception } from "../body/Senses";
 import { SignalField } from "./SignalField";
 import { DT } from "./constants";
 
@@ -28,6 +29,7 @@ export class SimulationEngine {
   physiology: Physiology;
   agent: Agent;
   world: Environment;
+  perception: Perception | null = null;
 
   private lastFrameSpikes = 0;
   private firingHzEma = 0;
@@ -80,10 +82,11 @@ export class SimulationEngine {
 
     // --- Fisiologia / homeostasis y su acoplamiento al cerebro ---
     const m = this.motor.snapshot();
-    const movement = Math.min(
-      1,
-      (m.legL + m.legR) * 0.5 + (m.armL + m.armR) * 0.25 + m.core * 0.1
-    );
+    // El gasto motor combina la contraccion muscular y el desplazamiento real
+    // del cuerpo por el terreno (caminar cuesta energia).
+    const motorEffort =
+      (m.legL + m.legR) * 0.5 + (m.armL + m.armR) * 0.25 + m.core * 0.1;
+    const movement = Math.min(1, motorEffort + this.agent.effort * 0.6);
     this.movementEffort = movement;
     const neural = Math.min(1, this.firingHzEma / 100);
     const p = this.physiology;
@@ -101,14 +104,75 @@ export class SimulationEngine {
       Math.max(0, p.thirst() - 0.82) * 3;
     if (distress > 0.05) net.stimulateRegion("amygdala", distress * 10);
 
-    // --- Mundo y cuerpo en el espacio ---
+    // --- Percepcion, reflejo de orientacion y locomocion ---
     this.world.update(simMs);
-    this.agent.integrate(simMs);
+    this.perceiveAndAct(simMs, m);
     // Si el cuerpo llega a un recurso, lo consume: comer sube energia, beber
     // sube hidratacion; ambos disparan recompensa (dopamina) via feed/giveWater.
     const got = this.world.consumeAt(this.agent.x, this.agent.z, REACH);
     if (got === "food") this.feed();
     else if (got === "water") this.giveWater();
+  }
+
+  // Percepcion del entorno + reflejo innato de orientacion (nivel tectal/tronco,
+  // como el coliculo superior que gira el cuerpo hacia un estimulo saliente) con
+  // un aporte cortical del sistema motor. Traduce todo en pulsiones de marcha y
+  // desplaza el cuerpo por el mundo.
+  private perceiveAndAct(simMs: number, m: Record<MuscleChannel, number>): void {
+    const p = this.physiology;
+    const agent = this.agent;
+    const net = this.network;
+
+    if (!p.alive) {
+      agent.setDrive(0, 0);
+      agent.integrate(simMs);
+      return;
+    }
+
+    // El recurso que necesita segun su pulsion dominante.
+    const need = p.dominantNeed();
+    const wantKind =
+      need === "hunger" ? "food" : need === "thirst" ? "water" : null;
+    const percept = perceive(agent, this.world, wantKind);
+    this.perception = percept;
+
+    // Vision -> retinas: entrada sensorial real a la red, mas la luz ambiente.
+    const VIS = 16;
+    net.stimulateRegion("retina_L", percept.leftEye * VIS + percept.brightness * 0.8);
+    net.stimulateRegion("retina_R", percept.rightEye * VIS + percept.brightness * 0.8);
+
+    // Dormido: el cuerpo no camina (el metabolismo y la recuperacion continuan).
+    if (p.asleep) {
+      agent.setDrive(0, 0);
+      agent.integrate(simMs);
+      return;
+    }
+
+    // --- Reflejo innato de orientacion ---
+    const urgency =
+      need === "none" ? 0.3 : Math.min(1, Math.max(p.hunger(), p.thirst()));
+    let forward: number;
+    let turn: number;
+    if (percept.sees && wantKind) {
+      // Gira hacia el objetivo; avanza cuando lo tiene aproximadamente de frente.
+      turn = Math.max(-1, Math.min(1, percept.bearing * 1.6));
+      forward = urgency * Math.max(0.15, Math.cos(percept.bearing));
+    } else {
+      // No lo ve: barre el entorno buscando (giro sostenido) y avanza despacio.
+      turn = need === "none" ? Math.sin(this.world.time * 0.0004) * 0.35 : 0.5;
+      forward = need === "none" ? 0.28 : 0.32;
+    }
+
+    // --- Aporte cortical: la salida motora del cerebro perturba la marcha
+    // (embodiment; el aprendizaje posterior reforzara lo util). ---
+    const CORTICAL = 0.6;
+    const corticalTurn = (m.armR - m.armL) * 0.5 + (m.legR - m.legL) * 0.8;
+    const corticalGo = (m.legL + m.legR) * 0.5;
+    turn = Math.max(-1, Math.min(1, turn + corticalTurn * CORTICAL));
+    forward = Math.min(1, forward + corticalGo * CORTICAL);
+
+    agent.setDrive(forward, turn);
+    agent.integrate(simMs);
   }
 
   // Consumir alimento: sube energia y dispara recompensa (dopamina).
@@ -139,6 +203,10 @@ export class SimulationEngine {
 
   agentSnapshot(): AgentState {
     return this.agent.snapshot();
+  }
+
+  perceptionSnapshot(): Perception | null {
+    return this.perception;
   }
 
   stimulateRegion(name: string, current: number): void {
