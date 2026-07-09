@@ -13,8 +13,8 @@ export interface AgentState {
   moving: boolean;
 }
 
-const MAX_SPEED = 6; // unidades/seg a pleno esfuerzo
-const TURN_RATE = 1.9; // rad/seg a pleno giro
+const MAX_SPEED = 12; // unidades/seg a pleno esfuerzo (agil y visible en vivo)
+const TURN_RATE = 2.6; // rad/seg a pleno giro
 
 export class Agent {
   x = 0;

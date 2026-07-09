@@ -248,16 +248,16 @@ export class SimulationEngine {
     let reflexTurn: number;
     if (percept.sees && wantKind) {
       reflexTurn = clamp1(percept.bearing * 1.6);
-      reflexForward = urgency * Math.max(0.15, Math.cos(percept.bearing));
+      reflexForward = Math.max(0.5, urgency) * Math.max(0.45, Math.cos(percept.bearing));
     } else if (memSite) {
       const bearing = normAngle(
         Math.atan2(memSite.x - agent.x, memSite.z - agent.z) - agent.heading
       );
       reflexTurn = clamp1(bearing * 1.6);
-      reflexForward = urgency * Math.max(0.2, Math.cos(bearing));
+      reflexForward = Math.max(0.5, urgency) * Math.max(0.45, Math.cos(bearing));
     } else {
       reflexTurn = need === "none" ? Math.sin(this.world.time * 0.0004) * 0.35 : 0.5;
-      reflexForward = need === "none" ? 0.28 : 0.32;
+      reflexForward = need === "none" ? 0.45 : 0.55;
     }
 
     // --- Salida motora GENERADA POR EL CEREBRO ---
@@ -274,9 +274,10 @@ export class SimulationEngine {
     const w = this.skills.neuralWeight();
     let turn = clamp1((1 - w) * reflexTurn + w * neuralTurn);
     let forward = (1 - w) * reflexForward + w * neuralForward;
-    // Impulso homeostatico: con hambre/sed el hipotalamo mantiene la marcha de
-    // busqueda aunque la corteza motora aun no empuje (evita que se congele).
-    if (need !== "none") forward = Math.max(forward, urgency * 0.16);
+    // Impulso homeostatico: con hambre/sed el hipotalamo mantiene una marcha de
+    // busqueda decidida aunque la corteza motora aun no empuje (evita que se
+    // congele y hace que su desplazamiento se vea con claridad).
+    if (need !== "none") forward = Math.max(forward, 0.45 + urgency * 0.3);
 
     // --- Torpeza motora: temblor y lentitud altos al nacer, minimos experto. ---
     const noise = this.skills.wanderNoise();

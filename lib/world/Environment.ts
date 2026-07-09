@@ -54,9 +54,11 @@ export class Environment {
   }
 
   private randPos(): [number, number] {
-    // Anillo entre r=12 (deja libre el centro donde nace el agente) y ARENA_R.
+    // Anillo cercano al centro: r=8 deja libre donde nace el agente y r=28 lo
+    // mantiene a mano. Asi tropieza con recursos a menudo y su aprendizaje se
+    // ve avanzar en vivo, en vez de vagar minutos por un anillo lejano.
     const a = this.rng.next() * Math.PI * 2;
-    const r = Math.sqrt(this.rng.range(12 * 12, (ARENA_R - 4) * (ARENA_R - 4)));
+    const r = Math.sqrt(this.rng.range(8 * 8, 28 * 28));
     return [Math.cos(a) * r, Math.sin(a) * r];
   }
 
@@ -123,8 +125,8 @@ export class Environment {
       const d = (r.x - x) * (r.x - x) + (r.z - z) * (r.z - z);
       if (d <= r2) {
         r.amount = 0;
-        // Reaparece entre 15 y 30 s de mundo mas tarde.
-        r.respawnAt = this.time + this.rng.range(15000, 30000);
+        // Reaparece entre 7 y 14 s de mundo mas tarde (forrajeo frecuente).
+        r.respawnAt = this.time + this.rng.range(7000, 14000);
         return r.kind;
       }
     }

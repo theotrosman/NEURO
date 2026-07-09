@@ -18,9 +18,11 @@ export class Skills {
   }
 
   // Exito discreto: conseguir un recurso es un ensayo de practica muy valioso.
+  // El salto es grande y perceptible: cada recurso conseguido se ve subir la
+  // destreza en el medidor, como un nino que afianza la marcha ensayo a ensayo.
   onForage(): void {
     this.forageCount++;
-    this.motor = Math.min(1, this.motor + 0.035);
+    this.motor = Math.min(1, this.motor + 0.05);
   }
 
   // Olvido lento si deja de practicar.
@@ -30,10 +32,14 @@ export class Skills {
 
   // --- Efectos de la destreza sobre el cuerpo ---
   // Cuanto del movimiento lo genera el propio cerebro (motoneuronas) frente al
-  // reflejo innato: nace conducido por el instinto (~5%) y, con la practica,
-  // pasa a conducir su cuerpo con la corteza motora que fue afinando (100%).
+  // reflejo innato de orientacion: nace conducido por el instinto (~5%) y, con
+  // la practica, pasa a conducir su cuerpo con la corteza motora que afino. Se
+  // topa por debajo de 1: el reflejo de orientacion del tronco (girar hacia lo
+  // que necesita) NUNCA se apaga del todo. Sin ese resto de instinto, al llegar
+  // a la maxima destreza el cuerpo se moveria solo por la salida motora cortical
+  // (que no aprendio a navegar de forma fiable) y no volveria a forrajear.
   neuralWeight(): number {
-    return this.motor;
+    return Math.min(0.6, this.motor);
   }
   // Velocidad util: torpe (60%) -> agil (100%).
   speedMul(): number {

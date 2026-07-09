@@ -140,7 +140,7 @@ export const useNeuro = create<NeuroState>((set, get) => ({
   noise: DEFAULT_NOISE,
 
   running: true,
-  speed: 4,
+  speed: 10,
 
   colorMode: "type",
   showNeurons: true,

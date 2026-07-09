@@ -34,9 +34,9 @@ const BASE_METAB = 0.000008; // gasto energetico basal
 const MOVE_METAB = 0.00002; // gasto extra por locomocion/esfuerzo
 const NEURAL_METAB = 0.000003; // el cerebro consume energia al disparar
 const HYDRO_RATE = 0.000007; // perdida de agua
-const FATIGUE_RATE = 0.000005; // cansancio por estar despierto
-const FATIGUE_MOVE = 0.000012; // cansancio extra por moverse
-const SLEEP_RECOVERY = 0.00008; // recuperacion de fatiga durmiendo
+const FATIGUE_RATE = 0.0000038; // cansancio por estar despierto
+const FATIGUE_MOVE = 0.000008; // cansancio extra por moverse
+const SLEEP_RECOVERY = 0.0002; // recuperacion de fatiga durmiendo (siestas breves)
 const HEALTH_LOSS = 0.00006; // dano por deficit critico
 const HEALTH_REGEN = 0.0000075; // curacion lenta si todo esta bien
 const REWARD_GAIN = 60; // convierte cambio de bienestar en recompensa
@@ -77,13 +77,18 @@ export class Physiology {
     if (this.asleep) {
       this.fatigue = clamp01(this.fatigue - dt * SLEEP_RECOVERY);
       this.energy = clamp01(this.energy - dt * BASE_METAB * 0.45);
-      if (this.fatigue < 0.06) this.asleep = false;
+      // Despierta tras una siesta breve, descansado, para retomar la actividad.
+      if (this.fatigue < 0.3) this.asleep = false;
     } else {
       const cost = BASE_METAB + movement * MOVE_METAB + neural * NEURAL_METAB;
       this.energy = clamp01(this.energy - dt * cost);
       this.fatigue = clamp01(
         this.fatigue + dt * (FATIGUE_RATE + movement * FATIGUE_MOVE)
       );
+      // Agotamiento: si el cansancio llega al limite, el organismo cae dormido
+      // por si mismo (como un ser vivo). Asi se autorregula y no queda congelado
+      // ni muere exhausto; tras la siesta retoma la busqueda y el aprendizaje.
+      if (this.fatigue >= 0.9) this.asleep = true;
     }
 
     this.hydration = clamp01(this.hydration - dt * HYDRO_RATE);
@@ -158,6 +163,12 @@ export class Physiology {
     const h = this.hunger();
     const t = this.thirst();
     const f = this.fatigue;
+    // Supervivencia primero: un deficit critico de energia o agua se antepone al
+    // descanso (no se duerme mientras se muere de hambre). Sin esto, el sueno
+    // puede monopolizar la conducta y dejar que el organismo muera de inanicion.
+    if (this.energy < 0.32 || this.hydration < 0.32) {
+      return this.hunger() >= this.thirst() ? "hunger" : "thirst";
+    }
     const max = Math.max(h, t, f);
     if (max < 0.4) return "none";
     if (max === h) return "hunger";

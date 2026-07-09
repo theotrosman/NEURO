@@ -38,7 +38,7 @@ export default function ControlPanel() {
       <input
         type="range"
         min={1}
-        max={12}
+        max={20}
         step={1}
         value={s.speed}
         onChange={(e) => s.setSpeed(Number(e.target.value))}
