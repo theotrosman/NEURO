@@ -45,6 +45,15 @@ export class Network {
   gain: number;
   noiseStd: number;
 
+  // --- Experimentos: lesiones y neuromodulacion global ("drogas") ---
+  // Regiones apagadas (indices). Sus neuronas quedan silenciadas cada paso.
+  lesionedRegions = new Set<number>();
+  private lesionMask: Uint8Array = new Uint8Array(0);
+  // Moduladores quimicos globales (1 = neutro):
+  excitability = 1; // estimulantes / dopamina lo suben
+  inhibition = 1; // depresores tipo GABA (alcohol, benzos) lo suben
+  noiseScale = 1; // psicodelicos / alucinogenos lo suben
+
   private rng: RNG;
   private density: number;
 
@@ -89,6 +98,7 @@ export class Network {
     for (const n of this.neurons) {
       this.tonic[n.id] = TONIC[REGIONS[n.region].name] ?? 0;
     }
+    this.lesionMask = new Uint8Array(this.neurons.length);
 
     // 3) Construir el conectoma (sinapsis con signo, peso y retardo).
     const result: ConnectomeResult = buildConnectome(
@@ -158,10 +168,19 @@ export class Network {
 
     // b) Integrar cada neurona y programar sus disparos.
     const neurons = this.neurons;
+    const excite = this.excitability;
+    const inhib = this.inhibition;
+    const noiseStd = this.noiseStd * this.noiseScale;
+    const mask = this.lesionMask;
     for (let i = 0; i < neurons.length; i++) {
       const n = neurons[i];
-      const noise = this.rng.gaussian(0, this.noiseStd) + this.tonic[i];
-      if (n.step(DT, this.time, noise)) {
+      // Region lesionada: la neurona no integra ni dispara (tejido apagado).
+      if (mask[i]) {
+        n.silence();
+        continue;
+      }
+      const noise = this.rng.gaussian(0, noiseStd) + this.tonic[i];
+      if (n.step(DT, this.time, noise, excite, inhib)) {
         this.spikesThisStep.push(i);
         const out = n.out;
         for (let k = 0; k < out.length; k++) {
@@ -185,6 +204,42 @@ export class Network {
 
   stimulateNeuron(id: number, current: number): void {
     if (this.neurons[id]) this.neurons[id].stimulate(current);
+  }
+
+  // --- Lesiones: apagar / reactivar regiones enteras ---
+  private rebuildLesionMask(): void {
+    const mask = new Uint8Array(this.neurons.length);
+    for (const r of this.lesionedRegions) {
+      const ids = this.regionNeurons[r];
+      if (ids) for (const id of ids) mask[id] = 1;
+    }
+    this.lesionMask = mask;
+  }
+
+  setLesion(name: string, on: boolean): void {
+    const r = REGION_INDEX[name];
+    if (r === undefined) return;
+    if (on) this.lesionedRegions.add(r);
+    else this.lesionedRegions.delete(r);
+    this.rebuildLesionMask();
+  }
+
+  toggleLesion(name: string): boolean {
+    const r = REGION_INDEX[name];
+    if (r === undefined) return false;
+    const on = !this.lesionedRegions.has(r);
+    this.setLesion(name, on);
+    return on;
+  }
+
+  isLesioned(name: string): boolean {
+    const r = REGION_INDEX[name];
+    return r !== undefined && this.lesionedRegions.has(r);
+  }
+
+  healAll(): void {
+    this.lesionedRegions.clear();
+    this.rebuildLesionMask();
   }
 
   get size(): number {

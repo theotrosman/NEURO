@@ -4,6 +4,9 @@ import { Physiology, PhysiologyState } from "../body/Physiology";
 import { Agent, AgentState } from "../body/Agent";
 import { Environment, WorldState } from "../world/Environment";
 import { perceive, Perception } from "../body/Senses";
+import { Plasticity } from "../brain/Plasticity";
+import { Skills } from "../body/Skills";
+import { SpatialMemory, MemorySite } from "../body/SpatialMemory";
 import { SignalField } from "./SignalField";
 import { DT } from "./constants";
 
@@ -12,6 +15,33 @@ const SPAWN_BUDGET = 70;
 
 // A que distancia (unidades) el cuerpo alcanza y consume un recurso.
 const REACH = 4;
+
+export interface LearningState {
+  motor: number; // 0..1 destreza motora aprendida
+  forageCount: number; // recursos conseguidos
+  memorySites: number; // lugares recordados
+  synActive: number; // sinapsis con elegibilidad viva
+  potentiation: number; // cambio sinaptico acumulado
+  enabled: boolean;
+}
+
+// Estado de los neuromoduladores globales ("drogas"). 1 = neutro.
+export interface NeuromodState {
+  excitability: number; // ganancia de la corriente excitatoria
+  inhibition: number; // ganancia de la corriente inhibitoria (GABA)
+  noise: number; // multiplicador del ruido de fondo
+  dopamine: number; // 0..1 descarga tonica exogena de dopamina
+}
+
+function clamp1(x: number): number {
+  return x < -1 ? -1 : x > 1 ? 1 : x;
+}
+
+function normAngle(a: number): number {
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
+}
 
 export interface EngineStats {
   neurons: number;
@@ -29,11 +59,22 @@ export class SimulationEngine {
   physiology: Physiology;
   agent: Agent;
   world: Environment;
+  plasticity: Plasticity;
+  skills: Skills;
+  memory: SpatialMemory;
   perception: Perception | null = null;
 
   private lastFrameSpikes = 0;
   private firingHzEma = 0;
   movementEffort = 0; // 0..1 esfuerzo motor del ultimo fotograma
+
+  // --- Experimentos ---
+  // Control manual: el usuario conduce el cuerpo y anula el reflejo innato.
+  manualControl = false;
+  private manualForward = 0;
+  private manualTurn = 0;
+  // Droga dopaminergica: descarga tonica exogena en el sistema de recompensa.
+  dopamineLevel = 0;
 
   constructor(opts: NetworkOptions = {}) {
     this.network = new Network(opts);
@@ -42,6 +83,11 @@ export class SimulationEngine {
     this.agent = new Agent();
     this.world = new Environment(opts.seed ?? 20260706);
     this.signals = new SignalField();
+    // Capas de aprendizaje: plasticidad sinaptica (STDP + dopamina), destreza
+    // motora procedimental y memoria espacial de tipo hipocampal.
+    this.plasticity = new Plasticity(this.network);
+    this.skills = new Skills();
+    this.memory = new SpatialMemory();
   }
 
   // Avanza `steps` pasos de simulacion (cada uno DT ms).
@@ -52,6 +98,9 @@ export class SimulationEngine {
 
     for (let s = 0; s < steps; s++) {
       net.step();
+      // STDP: tras cada paso, acumula trazas de elegibilidad segun las
+      // coincidencias temporales pre/post de las neuronas que dispararon.
+      this.plasticity.step();
       const spikes = net.spikesThisStep;
       frameSpikes += spikes.length;
 
@@ -92,6 +141,15 @@ export class SimulationEngine {
     const p = this.physiology;
     p.update(simMs, movement, neural);
 
+    // --- Aprendizaje por refuerzo (regla de los tres factores) ---
+    // La dopamina de la recompensa consolida las sinapsis que STDP dejo
+    // elegibles: la red refuerza los caminos que precedieron algo bueno.
+    this.plasticity.applyReward(p.reward, steps);
+    // La misma recompensa afina la destreza motora; sin practica, se olvida.
+    this.skills.reinforce(p.reward);
+    this.skills.decay(simMs);
+    this.memory.decay(simMs);
+
     // Interocepcion: el hipotalamo "siente" las necesidades internas.
     const drive = p.hunger() * 5 + p.thirst() * 5 + p.tiredness() * 3;
     if (drive > 0.1) net.stimulateRegion("hypothalamus", drive);
@@ -104,14 +162,29 @@ export class SimulationEngine {
       Math.max(0, p.thirst() - 0.82) * 3;
     if (distress > 0.05) net.stimulateRegion("amygdala", distress * 10);
 
+    // Droga dopaminergica (experimento): descarga tonica exogena en la sustancia
+    // negra y los ganglios basales, mas un refuerzo artificial de la plasticidad
+    // (euforia + aprendizaje acelerado, desligado de cualquier logro real).
+    if (this.dopamineLevel > 0) {
+      net.stimulateRegion("substantia_nigra", this.dopamineLevel * 30);
+      net.stimulateRegion("basal_ganglia", this.dopamineLevel * 8);
+      this.plasticity.applyReward(this.dopamineLevel * 0.5, steps);
+    }
+
     // --- Percepcion, reflejo de orientacion y locomocion ---
     this.world.update(simMs);
     this.perceiveAndAct(simMs, m);
     // Si el cuerpo llega a un recurso, lo consume: comer sube energia, beber
     // sube hidratacion; ambos disparan recompensa (dopamina) via feed/giveWater.
     const got = this.world.consumeAt(this.agent.x, this.agent.z, REACH);
-    if (got === "food") this.feed();
-    else if (got === "water") this.giveWater();
+    if (got) {
+      // Exito de forrajeo: consolida la destreza motora y GRABA el lugar en la
+      // memoria espacial (hipocampo), para volver a el cuando lo necesite.
+      this.skills.onForage();
+      this.memory.remember(got, this.agent.x, this.agent.z);
+      if (got === "food") this.feed();
+      else this.giveWater();
+    }
   }
 
   // Percepcion del entorno + reflejo innato de orientacion (nivel tectal/tronco,
@@ -148,17 +221,37 @@ export class SimulationEngine {
       return;
     }
 
-    // --- Reflejo innato de orientacion ---
+    // --- Control manual (experimento): el usuario toma el volante y anula el
+    // reflejo. El cerebro sigue percibiendo y activo; solo la marcha la mandas tu.
+    if (this.manualControl) {
+      agent.setDrive(this.manualForward, this.manualTurn);
+      agent.integrate(simMs);
+      return;
+    }
+
+    // --- Reflejo de orientacion + navegacion por memoria espacial ---
     const urgency =
       need === "none" ? 0.3 : Math.min(1, Math.max(p.hunger(), p.thirst()));
+    // Si necesita algo pero no lo ve, consulta si RECUERDA donde conseguirlo.
+    const memSite =
+      !percept.sees && wantKind
+        ? this.memory.recall(wantKind, agent.x, agent.z)
+        : null;
     let forward: number;
     let turn: number;
     if (percept.sees && wantKind) {
-      // Gira hacia el objetivo; avanza cuando lo tiene aproximadamente de frente.
-      turn = Math.max(-1, Math.min(1, percept.bearing * 1.6));
+      // Lo ve: gira hacia el objetivo y avanza cuando lo tiene casi de frente.
+      turn = clamp1(percept.bearing * 1.6);
       forward = urgency * Math.max(0.15, Math.cos(percept.bearing));
+    } else if (memSite) {
+      // No lo ve, pero recuerda un lugar: NAVEGA hacia el (ya no vaga al azar).
+      const bearing = normAngle(
+        Math.atan2(memSite.x - agent.x, memSite.z - agent.z) - agent.heading
+      );
+      turn = clamp1(bearing * 1.6);
+      forward = urgency * Math.max(0.2, Math.cos(bearing));
     } else {
-      // No lo ve: barre el entorno buscando (giro sostenido) y avanza despacio.
+      // Sin vista ni recuerdo: barre el entorno buscando (o deambula saciado).
       turn = need === "none" ? Math.sin(this.world.time * 0.0004) * 0.35 : 0.5;
       forward = need === "none" ? 0.28 : 0.32;
     }
@@ -168,8 +261,15 @@ export class SimulationEngine {
     const CORTICAL = 0.6;
     const corticalTurn = (m.armR - m.armL) * 0.5 + (m.legR - m.legL) * 0.8;
     const corticalGo = (m.legL + m.legR) * 0.5;
-    turn = Math.max(-1, Math.min(1, turn + corticalTurn * CORTICAL));
+    turn = clamp1(turn + corticalTurn * CORTICAL);
     forward = Math.min(1, forward + corticalGo * CORTICAL);
+
+    // --- Destreza motora (aprendizaje procedimental) ---
+    // Al nacer el cuerpo es torpe: lento, de giro impreciso y con temblor. Con
+    // la practica exitosa se vuelve agil, certero y estable.
+    const noise = this.skills.wanderNoise();
+    turn = clamp1(turn * this.skills.turnMul() + (Math.random() - 0.5) * 2 * noise);
+    forward = Math.min(1, Math.max(0, forward * this.skills.speedMul()));
 
     agent.setDrive(forward, turn);
     agent.integrate(simMs);
@@ -207,6 +307,83 @@ export class SimulationEngine {
 
   perceptionSnapshot(): Perception | null {
     return this.perception;
+  }
+
+  // Estado de las tres capas de aprendizaje (para el HUD).
+  learningSnapshot(): LearningState {
+    const ps = this.plasticity.stats();
+    return {
+      motor: this.skills.motor,
+      forageCount: this.skills.forageCount,
+      memorySites: this.memory.sites.length,
+      synActive: ps.active,
+      potentiation: ps.potentiation,
+      enabled: ps.enabled,
+    };
+  }
+
+  memorySnapshot(): MemorySite[] {
+    return this.memory.snapshot();
+  }
+
+  // Congela / reactiva la plasticidad sinaptica (para comparar con/sin aprender).
+  togglePlasticity(): void {
+    this.plasticity.enabled = !this.plasticity.enabled;
+  }
+
+  // --- Experimentos: lesiones ---
+  toggleLesion(name: string): boolean {
+    return this.network.toggleLesion(name);
+  }
+
+  setLesion(name: string, on: boolean): void {
+    this.network.setLesion(name, on);
+  }
+
+  isLesioned(name: string): boolean {
+    return this.network.isLesioned(name);
+  }
+
+  healAll(): void {
+    this.network.healAll();
+  }
+
+  // --- Experimentos: neuromoduladores / "drogas" ---
+  setNeuromod(mod: Partial<NeuromodState>): void {
+    if (mod.excitability !== undefined) this.network.excitability = mod.excitability;
+    if (mod.inhibition !== undefined) this.network.inhibition = mod.inhibition;
+    if (mod.noise !== undefined) this.network.noiseScale = mod.noise;
+    if (mod.dopamine !== undefined) this.dopamineLevel = mod.dopamine;
+  }
+
+  neuromodSnapshot(): NeuromodState {
+    return {
+      excitability: this.network.excitability,
+      inhibition: this.network.inhibition,
+      noise: this.network.noiseScale,
+      dopamine: this.dopamineLevel,
+    };
+  }
+
+  clearNeuromod(): void {
+    this.network.excitability = 1;
+    this.network.inhibition = 1;
+    this.network.noiseScale = 1;
+    this.dopamineLevel = 0;
+  }
+
+  // --- Experimentos: control manual del organismo ---
+  setManualControl(on: boolean): void {
+    this.manualControl = on;
+    if (!on) {
+      this.manualForward = 0;
+      this.manualTurn = 0;
+    }
+  }
+
+  setManualDrive(forward: number, turn: number): void {
+    this.manualForward = clamp1(forward);
+    this.manualTurn = clamp1(turn);
   }
 
   stimulateRegion(name: string, current: number): void {

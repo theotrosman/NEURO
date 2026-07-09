@@ -18,6 +18,7 @@ export default function World() {
   const showWorld = useNeuro((s) => s.showWorld);
 
   const orbRefs = useRef<(THREE.Group | null)[]>([]);
+  const memRefs = useRef<(THREE.Mesh | null)[]>([]);
   const hemiRef = useRef<THREE.HemisphereLight>(null);
   const sunRef = useRef<THREE.DirectionalLight>(null);
 
@@ -40,6 +41,27 @@ export default function World() {
         g.position.set(r.x, GROUND_Y + 1.4 + Math.sin(t + i) * 0.35, r.z);
         g.rotation.y = t + i;
       }
+    }
+
+    // Memoria espacial (hipocampo): anillos en el suelo donde el organismo
+    // recuerda haber encontrado comida o agua. Brillan segun la fuerza del
+    // recuerdo y laten suavemente; es conocimiento del mundo hecho visible.
+    const sites = engine.memory.sites;
+    for (let i = 0; i < memRefs.current.length; i++) {
+      const ring = memRefs.current[i];
+      if (!ring) continue;
+      const site = sites[i];
+      if (!site) {
+        ring.visible = false;
+        continue;
+      }
+      ring.visible = true;
+      ring.position.set(site.x, GROUND_Y + 0.06, site.z);
+      const sc = (1.1 + site.strength * 1.7) * (1 + Math.sin(t * 1.5 + i) * 0.05);
+      ring.scale.set(sc, sc, sc);
+      const mat = ring.material as THREE.MeshBasicMaterial;
+      mat.color.set(site.kind === "food" ? FOOD_COLOR : WATER_COLOR);
+      mat.opacity = 0.12 + site.strength * 0.3;
     }
 
     // Ciclo dia/noche: intensidad de luz y color de cielo/niebla.
@@ -135,6 +157,29 @@ export default function World() {
           </group>
         );
       })}
+
+      {/* Marcas de memoria espacial: anillos donde el organismo recuerda que
+          hubo un recurso (verde=comida, azul=agua). Se avivan con el recuerdo. */}
+      {Array.from({ length: 18 }).map((_, i) => (
+        <mesh
+          key={`mem-${i}`}
+          rotation={[-Math.PI / 2, 0, 0]}
+          visible={false}
+          ref={(el) => {
+            memRefs.current[i] = el;
+          }}
+        >
+          <ringGeometry args={[1.5, 2.05, 30]} />
+          <meshBasicMaterial
+            transparent
+            opacity={0.2}
+            side={THREE.DoubleSide}
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+            toneMapped={false}
+          />
+        </mesh>
+      ))}
     </group>
   );
 }

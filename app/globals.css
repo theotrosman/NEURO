@@ -33,61 +33,126 @@ body {
   inset: 0;
 }
 
-.panel {
+/* Columnas laterales del HUD: agrupan los paneles y dejan LIBRE el centro y la
+   base de la pantalla, que es donde se ve al organismo moverse por el mundo. */
+.col {
   position: fixed;
+  top: 14px;
+  bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 10;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 2px;
+  pointer-events: none; /* los huecos dejan pasar el cursor al mundo 3D */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120, 150, 255, 0.35) transparent;
+}
+.col::-webkit-scrollbar {
+  width: 7px;
+}
+.col::-webkit-scrollbar-thumb {
+  background: rgba(120, 150, 255, 0.3);
+  border-radius: 4px;
+}
+.col-left {
+  left: 14px;
+  width: 266px;
+}
+.col-right {
+  right: 14px;
+  width: 250px;
+}
+
+.panel {
+  position: relative;
   background: var(--panel);
   border: 1px solid var(--panel-border);
   border-radius: 14px;
-  padding: 14px 16px;
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
   font-size: 13px;
-  z-index: 10;
   user-select: none;
-}
-
-.panel h1 {
-  font-size: 17px;
-  margin: 0 0 2px;
-  letter-spacing: 0.5px;
-  background: linear-gradient(90deg, var(--accent), var(--accent-2));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  flex: 0 0 auto;
+  overflow: hidden;
+  pointer-events: auto; /* el panel sí captura el cursor */
 }
 
 .panel .subtitle {
   color: var(--text-dim);
   font-size: 11px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
-.panel-left {
-  top: 16px;
-  left: 16px;
-  width: 268px;
-  max-height: calc(100vh - 32px);
-  overflow-y: auto;
+/* Encabezado plegable de cada panel */
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.panel-head:hover {
+  background: rgba(95, 134, 255, 0.1);
+  border: none;
+}
+.panel-head:active {
+  transform: none;
+}
+.panel-title {
+  flex: 1;
+  text-align: left;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.chev {
+  color: var(--text-dim);
+  font-size: 11px;
+  transition: transform 0.18s ease;
+}
+.chev.open {
+  transform: rotate(90deg);
+}
+.panel-body {
+  padding: 0 14px 13px;
 }
 
-.panel-right {
-  top: 16px;
-  right: 16px;
-  width: 234px;
-}
-
-.panel-legend {
-  bottom: 16px;
-  right: 16px;
-  width: 250px;
-}
-
-.panel-vitals {
-  bottom: 16px;
+/* Botón flotante para ocultar/mostrar todo el HUD (o tecla H) */
+.ui-toggle {
+  position: fixed;
+  top: 14px;
   left: 50%;
   transform: translateX(-50%);
-  width: 320px;
+  z-index: 20;
+  font-size: 12px;
+  padding: 7px 15px;
+  border-radius: 20px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  color: var(--text);
+}
+.ui-toggle:hover {
+  border-color: var(--accent);
+  background: rgba(95, 134, 255, 0.28);
+}
+.ui-toggle:active {
+  transform: translateX(-50%) scale(0.97);
 }
 
 .section {
@@ -141,6 +206,26 @@ button.active {
 button.primary {
   background: linear-gradient(90deg, rgba(95, 134, 255, 0.35), rgba(60, 255, 210, 0.3));
   border-color: var(--accent);
+}
+
+/* Region lesionada (apagada): rojo de alarma. */
+button.lesion-on {
+  background: rgba(255, 90, 60, 0.26);
+  border-color: #ff5a3c;
+  color: #ffd9cf;
+}
+button.lesion-on:hover {
+  background: rgba(255, 90, 60, 0.36);
+  border-color: #ff7a5c;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+button:disabled:hover {
+  background: rgba(95, 134, 255, 0.14);
+  border-color: var(--panel-border);
 }
 
 button.wide {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useNeuro } from "./store";
+import Panel from "./Panel";
 import { NEURON_TYPES } from "../lib/neuron/NeuronTypes";
 import { REGIONS } from "../lib/brain/regions";
 import { NEUROTRANSMITTERS } from "../lib/neuron/Neurotransmitter";
@@ -28,12 +29,17 @@ export default function Legend() {
     items = Object.values(NEURON_TYPES).map((t) => ({ label: t.label, color: t.color }));
   }
 
+  const title =
+    "Leyenda " +
+    (colorMode === "type"
+      ? "· tipos"
+      : colorMode === "region"
+      ? "· regiones"
+      : "· actividad");
+
   return (
-    <div className="panel panel-legend">
-      <div className="section" style={{ marginTop: 0 }}>
-        Leyenda {colorMode === "type" ? "· tipos de neurona" : colorMode === "region" ? "· regiones" : "· actividad"}
-      </div>
-      <div style={{ maxHeight: 190, overflowY: "auto" }}>
+    <Panel title={title} defaultCollapsed>
+      <div style={{ maxHeight: 190, overflowY: "auto", marginTop: 4 }}>
         {items.map((it) => (
           <div className="legend-item" key={it.label}>
             <span className="dot" style={{ background: it.color, color: it.color }} />
@@ -50,6 +56,6 @@ export default function Legend() {
           </div>
         ))}
       </div>
-    </div>
+    </Panel>
   );
 }

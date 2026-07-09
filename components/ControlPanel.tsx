@@ -1,6 +1,7 @@
 "use client";
 
 import { useNeuro, ColorMode } from "./store";
+import Panel from "./Panel";
 
 const COLOR_MODES: { key: ColorMode; label: string }[] = [
   { key: "type", label: "Tipo" },
@@ -21,9 +22,8 @@ export default function ControlPanel() {
   const s = useNeuro();
 
   return (
-    <div className="panel panel-left">
-      <h1>NEURO</h1>
-      <div className="subtitle">
+    <Panel title="NEURO · control">
+      <div className="subtitle" style={{ marginTop: 4 }}>
         Cerebro humano simulado neurona a neurona (modelo de Izhikevich) y
         encarnado en 3D.
       </div>
@@ -128,6 +128,6 @@ export default function ControlPanel() {
           🎲
         </button>
       </div>
-    </div>
+    </Panel>
   );
 }

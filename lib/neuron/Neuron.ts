@@ -76,13 +76,28 @@ export class Neuron {
     this.iExt += current;
   }
 
+  // Silencia la neurona (region lesionada): la mantiene en reposo, sin disparar
+  // ni propagar. Es el equivalente funcional de un tejido cerebral inactivado.
+  silence(): void {
+    this.v = this.type.c;
+    this.u = this.type.b * this.v;
+    this.iExc = 0;
+    this.iInh = 0;
+    this.iExt = 0;
+    this.spiked = false;
+    this.spikeGlow -= this.spikeGlow * 0.2; // el destello se apaga
+    this.fireRate -= this.fireRate * 0.1;
+  }
+
   // Avanza un paso de integracion de `dt` ms. Devuelve true si dispara.
   // Se usa el esquema de dos medios pasos de Izhikevich para estabilidad.
-  step(dt: number, time: number, noise: number): boolean {
+  // `excite`/`inhib` son moduladores globales (neuromoduladores/"drogas"): un
+  // estimulante sube la excitabilidad; un depresor tipo GABA sube la inhibicion.
+  step(dt: number, time: number, noise: number, excite = 1, inhib = 1): boolean {
     const t = this.type;
 
-    // Corriente total que ven las dendritas -> soma.
-    const I = this.iExc - this.iInh + this.iExt + noise;
+    // Corriente total que ven las dendritas -> soma (modulada quimicamente).
+    const I = this.iExc * excite - this.iInh * inhib + this.iExt + noise;
 
     // Integracion de la membrana (dos medios pasos).
     const half = 0.5 * dt;

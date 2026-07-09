@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useNeuro } from "./store";
+import Panel from "./Panel";
 import { NEURON_TYPES } from "../lib/neuron/NeuronTypes";
 import { REGIONS } from "../lib/brain/regions";
 
@@ -41,9 +42,8 @@ export default function StatsPanel() {
   }, [selected, engine]);
 
   return (
-    <div className="panel panel-right">
-      <div className="section" style={{ marginTop: 0 }}>Estado de la red</div>
-      <div className="stat"><span className="k">Neuronas</span><span className="v">{stats.neurons.toLocaleString()}</span></div>
+    <Panel title="Red neuronal">
+      <div className="stat" style={{ marginTop: 2 }}><span className="k">Neuronas</span><span className="v">{stats.neurons.toLocaleString()}</span></div>
       <div className="stat"><span className="k">Sinapsis</span><span className="v">{stats.synapses.toLocaleString()}</span></div>
       <div className="stat"><span className="k">Tasa de disparo</span><span className="v">{stats.firingHz.toFixed(1)} Hz</span></div>
       <div className="stat"><span className="k">Impulsos activos</span><span className="v">{stats.activePulses}</span></div>
@@ -62,7 +62,7 @@ export default function StatsPanel() {
       ) : (
         <div className="hint">Hace clic en una neurona para inspeccionar su potencial de membrana en tiempo real.</div>
       )}
-    </div>
+    </Panel>
   );
 }
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useNeuro } from "./store";
+import Panel from "./Panel";
 import { PhysiologyState } from "../lib/body/Physiology";
 import { Perception } from "../lib/body/Senses";
 
@@ -47,11 +48,10 @@ export default function VitalsPanel() {
   if (!p) return null;
 
   return (
-    <div className="panel panel-vitals">
-      <div className="section" style={{ marginTop: 0 }}>
-        Signos vitales {p.asleep && <span className="badge">durmiendo</span>}
-      </div>
-
+    <Panel
+      title="Signos vitales"
+      right={p.asleep ? <span className="badge">durmiendo</span> : null}
+    >
       <Bar label="Energía" v={p.energy} color="#ffd23c" warn={0.2} />
       <Bar label="Hidratación" v={p.hydration} color="#4ad0ff" warn={0.2} />
       <Bar label="Salud" v={p.health} color="#3cff8a" warn={0.35} />
@@ -112,7 +112,7 @@ export default function VitalsPanel() {
       >
         {p.asleep ? "Despertar" : "Dormir"}
       </button>
-    </div>
+    </Panel>
   );
 }
 
