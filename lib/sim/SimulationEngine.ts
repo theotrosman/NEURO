@@ -16,6 +16,11 @@ const SPAWN_BUDGET = 70;
 // A que distancia (unidades) el cuerpo alcanza y consume un recurso.
 const REACH = 4;
 
+// Distancia recorrida (unidades) por cada ciclo completo de marcha (dos pasos).
+// La fase del andar avanza con la distancia REAL, no con el reloj, de modo que
+// los pies no "patinan": el ciclo de piernas va sincronizado con el avance.
+const STRIDE_LEN = 8.5;
+
 export interface LearningState {
   motor: number; // 0..1 destreza motora aprendida
   neural: number; // 0..1 cuanto del movimiento genera el propio cerebro
@@ -24,6 +29,16 @@ export interface LearningState {
   synActive: number; // sinapsis con elegibilidad viva
   potentiation: number; // cambio sinaptico acumulado
   enabled: boolean;
+}
+
+// Estado de la marcha, para animar el cuerpo de forma verosimil (paso, balanceo,
+// flexion de rodillas). La fase avanza con la distancia recorrida.
+export interface GaitState {
+  phase: number; // 0..2π, fase del ciclo de marcha (pierna izq. de referencia)
+  loco: number; // 0..1 intensidad de locomocion, suavizada
+  skill: number; // 0..1 destreza motora: modula lo suave/torpe del andar
+  speed: number; // unidades/seg actuales
+  asleep: boolean; // dormido -> sin marcha
 }
 
 // Estado de los neuromoduladores globales ("drogas"). 1 = neutro.
@@ -80,6 +95,13 @@ export class SimulationEngine {
   // fotograma para premiar (con dopamina) el haberse acercado a ella.
   private lastGoalDist = -1;
   private lastWantKind: ResourceKind | null = null;
+
+  // --- Marcha (para la animacion del cuerpo) ---
+  // Fase del ciclo de andar; avanza con la distancia recorrida por el cuerpo.
+  gaitPhase = 0;
+  private gaitLoco = 0; // intensidad de locomocion suavizada
+  private prevAgentX = 0;
+  private prevAgentZ = 0;
 
   constructor(opts: NetworkOptions = {}) {
     this.network = new Network(opts);
@@ -190,6 +212,19 @@ export class SimulationEngine {
       if (got === "food") this.feed();
       else this.giveWater();
     }
+
+    // --- Fase de marcha: avanza con la distancia REAL recorrida este fotograma
+    // (asi las piernas van sincronizadas con el avance y los pies no patinan).
+    const dx = this.agent.x - this.prevAgentX;
+    const dz = this.agent.z - this.prevAgentZ;
+    this.prevAgentX = this.agent.x;
+    this.prevAgentZ = this.agent.z;
+    const disp = Math.hypot(dx, dz);
+    this.gaitPhase =
+      (this.gaitPhase + (disp / STRIDE_LEN) * Math.PI * 2) % (Math.PI * 2);
+    // Intensidad de locomocion suavizada (para fundir entre reposo y marcha).
+    const targetLoco = Math.min(1, this.agent.speed / 5);
+    this.gaitLoco += (targetLoco - this.gaitLoco) * Math.min(1, simMs / 130);
   }
 
   // Percepcion del entorno + reflejo innato de orientacion (nivel tectal/tronco,
@@ -444,6 +479,17 @@ export class SimulationEngine {
 
   motorSnapshot(): Record<MuscleChannel, number> {
     return this.motor.snapshot();
+  }
+
+  // Estado de la marcha para animar el cuerpo (fase del paso, intensidad, destreza).
+  gaitSnapshot(): GaitState {
+    return {
+      phase: this.gaitPhase,
+      loco: this.gaitLoco,
+      skill: this.skills.motor,
+      speed: this.agent.speed,
+      asleep: this.physiology.asleep,
+    };
   }
 
   stats(): EngineStats {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef } from "react";
+import { useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { LANDMARKS, Vec3 } from "../lib/body/landmarks";
@@ -9,7 +9,7 @@ import { useNeuro } from "./store";
 const UP = new THREE.Vector3(0, 1, 0);
 
 // Construye una capsula orientada entre dos puntos, en coordenadas relativas
-// a un origen (la articulacion proximal alrededor de la cual pivota el miembro).
+// a un origen (la articulacion proximal alrededor de la cual pivota el hueso).
 function segment(from: Vec3, to: Vec3, origin: Vec3) {
   const a = new THREE.Vector3(...from);
   const b = new THREE.Vector3(...to);
@@ -26,6 +26,10 @@ function segment(from: Vec3, to: Vec3, origin: Vec3) {
   };
 }
 
+function sub(a: Vec3, b: Vec3): Vec3 {
+  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+
 const GHOST = "#5f86ff";
 
 export default function HumanBody() {
@@ -33,53 +37,90 @@ export default function HumanBody() {
   const engine = useNeuro((s) => s.engine);
   const stimulate = useNeuro((s) => s.stimulate);
 
-  const armL = useRef<THREE.Group>(null);
-  const armR = useRef<THREE.Group>(null);
-  const legL = useRef<THREE.Group>(null);
-  const legR = useRef<THREE.Group>(null);
+  // Cadena articulada: cada miembro tiene un segmento proximal (pivota en el
+  // hombro/cadera) y un segmento distal encadenado que pivota en el codo/rodilla.
+  const armLU = useRef<THREE.Group>(null); // brazo izq, hombro
+  const armLE = useRef<THREE.Group>(null); // antebrazo izq, codo
+  const armRU = useRef<THREE.Group>(null);
+  const armRE = useRef<THREE.Group>(null);
+  const legLU = useRef<THREE.Group>(null); // muslo izq, cadera
+  const legLK = useRef<THREE.Group>(null); // pierna izq, rodilla
+  const legRU = useRef<THREE.Group>(null);
+  const legRK = useRef<THREE.Group>(null);
   const torso = useRef<THREE.Group>(null);
 
-  const limbs = useMemo(() => {
-    const L = LANDMARKS;
-    return {
-      armL: {
-        origin: L.shoulderL,
-        upper: segment(L.shoulderL, L.elbowL, L.shoulderL),
-        lower: segment(L.elbowL, L.handL, L.shoulderL),
-        rUpper: 0.5, rLower: 0.42,
-      },
-      armR: {
-        origin: L.shoulderR,
-        upper: segment(L.shoulderR, L.elbowR, L.shoulderR),
-        lower: segment(L.elbowR, L.handR, L.shoulderR),
-        rUpper: 0.5, rLower: 0.42,
-      },
-      legL: {
-        origin: L.hipL,
-        upper: segment(L.hipL, L.kneeL, L.hipL),
-        lower: segment(L.kneeL, L.footL, L.hipL),
-        rUpper: 0.72, rLower: 0.55,
-      },
-      legR: {
-        origin: L.hipR,
-        upper: segment(L.hipR, L.kneeR, L.hipR),
-        lower: segment(L.kneeR, L.footR, L.hipR),
-        rUpper: 0.72, rLower: 0.55,
-      },
-    };
-  }, []);
-
+  // --- Ciclo de marcha: gobernado por gaitSnapshot (fase por distancia real,
+  //     intensidad de locomocion, destreza). Las piernas van en antifase, las
+  //     rodillas flexionan en la fase de balanceo, los brazos contrabalancean y
+  //     la torpeza (baja destreza) agrega temblor. En reposo se funde a una
+  //     postura de respiro con leves espasmos segun la salida motora neuronal. ---
   useFrame(({ clock }) => {
     const t = clock.getElapsedTime();
+    const g = engine?.gaitSnapshot();
     const m = engine?.motorSnapshot();
-    const idle = Math.sin(t * 1.1) * 0.05;
-    if (armL.current) armL.current.rotation.x = -(m?.armL ?? 0) * 1.1 + idle;
-    if (armR.current) armR.current.rotation.x = -(m?.armR ?? 0) * 1.1 - idle;
-    if (legL.current) legL.current.rotation.x = (m?.legL ?? 0) * 0.7 - idle;
-    if (legR.current) legR.current.rotation.x = (m?.legR ?? 0) * 0.7 + idle;
+
+    const walk = g ? g.loco : 0; // 0..1 cuanto camina
+    const idleW = 1 - walk;
+    const skill = g ? g.skill : 0.3;
+    const p = g ? g.phase : 0; // fase de la pierna izq. de referencia
+    const pR = p + Math.PI; // pierna derecha en antifase
+    const clumsy = (1 - skill) * walk; // temblor: alto si torpe, nulo experto
+
+    // Amplitudes articulares (radianes).
+    const hipAmp = 0.55;
+    const kneeAmp = 1.15;
+    const armAmp = 0.5;
+    const elbowBase = 0.32;
+    const elbowSwing = 0.4;
+
+    const mArmL = m?.armL ?? 0;
+    const mArmR = m?.armR ?? 0;
+    const mLegL = m?.legL ?? 0;
+    const mLegR = m?.legR ?? 0;
+    const mCore = m?.core ?? 0;
+
+    // --- Muslos (cadera): balanceo adelante/atras en antifase ---
+    const legSwingL = -Math.sin(p) * hipAmp;
+    const legSwingR = -Math.sin(pR) * hipAmp;
+    const legIdleL = -mLegL * 0.45 + Math.sin(t * 1.05) * 0.02;
+    const legIdleR = -mLegR * 0.45 - Math.sin(t * 1.05) * 0.02;
+    const nLegL = clumsy * 0.18 * Math.sin(t * 8.7 + 0.5);
+    const nLegR = clumsy * 0.18 * Math.sin(t * 8.1 + 2.7);
+    if (legLU.current)
+      legLU.current.rotation.x = legSwingL * walk + legIdleL * idleW + nLegL;
+    if (legRU.current)
+      legRU.current.rotation.x = legSwingR * walk + legIdleR * idleW + nLegR;
+
+    // --- Rodillas: solo flexionan (positivo), maxima en balanceo para librar el
+    //     suelo; extendidas en apoyo. Reposo casi recto. ---
+    const kneeL = (Math.max(0, Math.cos(p)) * kneeAmp + 0.12) * walk + Math.abs(nLegL);
+    const kneeR = (Math.max(0, Math.cos(pR)) * kneeAmp + 0.12) * walk + Math.abs(nLegR);
+    if (legLK.current) legLK.current.rotation.x = kneeL;
+    if (legRK.current) legRK.current.rotation.x = kneeR;
+
+    // --- Brazos (hombro): contrabalanceo (opuesto a la pierna del mismo lado) ---
+    const armSwingL = Math.sin(p) * armAmp;
+    const armSwingR = Math.sin(pR) * armAmp;
+    const armIdleL = -mArmL * 1.0 + Math.sin(t * 1.1) * 0.05;
+    const armIdleR = -mArmR * 1.0 - Math.sin(t * 1.1) * 0.05;
+    const nArmL = clumsy * 0.15 * Math.sin(t * 7.3 + 1.1);
+    const nArmR = clumsy * 0.15 * Math.sin(t * 7.9 + 3.4);
+    if (armLU.current)
+      armLU.current.rotation.x = armSwingL * walk + armIdleL * idleW + nArmL;
+    if (armRU.current)
+      armRU.current.rotation.x = armSwingR * walk + armIdleR * idleW + nArmR;
+
+    // --- Codos: siempre algo flexionados; mas cuando el brazo va adelante ---
+    const elbowL = elbowBase + Math.max(0, -armSwingL / armAmp) * elbowSwing * walk;
+    const elbowR = elbowBase + Math.max(0, -armSwingR / armAmp) * elbowSwing * walk;
+    if (armLE.current) armLE.current.rotation.x = -elbowL;
+    if (armRE.current) armRE.current.rotation.x = -elbowR;
+
+    // --- Torso: respira y gira levemente al contrario del paso ---
     if (torso.current) {
-      const breathe = 1 + Math.sin(t * 1.6) * 0.012 + (m?.core ?? 0) * 0.04;
+      const breathe = 1 + Math.sin(t * 1.6) * 0.012 + mCore * 0.04;
       torso.current.scale.set(1, breathe, 1);
+      torso.current.rotation.y = Math.sin(p) * 0.1 * walk;
     }
   });
 
@@ -113,22 +154,6 @@ export default function HumanBody() {
     />
   );
 
-  const renderLimb = (
-    ref: React.RefObject<THREE.Group>,
-    limb: (typeof limbs)[keyof typeof limbs]
-  ) => (
-    <group ref={ref} position={limb.origin}>
-      <mesh position={limb.upper.pos} quaternion={limb.upper.quat}>
-        <capsuleGeometry args={[limb.rUpper, limb.upper.len, 4, 10]} />
-        {skin}
-      </mesh>
-      <mesh position={limb.lower.pos} quaternion={limb.lower.quat}>
-        <capsuleGeometry args={[limb.rLower, limb.lower.len, 4, 10]} />
-        {skin}
-      </mesh>
-    </group>
-  );
-
   // Zona sensorial clicable (mano/pie/ojo): inyecta estimulo al receptor.
   const touch = (pos: Vec3, region: string, r: number, colr: string) => (
     <mesh
@@ -137,7 +162,7 @@ export default function HumanBody() {
         e.stopPropagation();
         stimulate(region, 60);
       }}
-      onPointerOver={(e) => (document.body.style.cursor = "pointer")}
+      onPointerOver={() => (document.body.style.cursor = "pointer")}
       onPointerOut={() => (document.body.style.cursor = "auto")}
     >
       <sphereGeometry args={[r, 12, 12]} />
@@ -151,6 +176,41 @@ export default function HumanBody() {
       />
     </mesh>
   );
+
+  // Miembro articulado de dos huesos: el segmento proximal pivota en `origin`
+  // (hombro/cadera) y el distal, encadenado, pivota en `jointPos` (codo/rodilla).
+  // La zona tactil (mano/pie) viaja con el segmento distal.
+  const articLimb = (
+    upperRef: React.RefObject<THREE.Group>,
+    jointRef: React.RefObject<THREE.Group>,
+    origin: Vec3,
+    jointPos: Vec3,
+    distalPos: Vec3,
+    rUpper: number,
+    rLower: number,
+    touchRegion: string,
+    touchR: number
+  ) => {
+    const upper = segment(origin, jointPos, origin);
+    const jointLocal = sub(jointPos, origin);
+    const lower = segment(jointPos, distalPos, jointPos);
+    const touchLocal = sub(distalPos, jointPos);
+    return (
+      <group ref={upperRef} position={origin}>
+        <mesh position={upper.pos} quaternion={upper.quat}>
+          <capsuleGeometry args={[rUpper, upper.len, 4, 10]} />
+          {skin}
+        </mesh>
+        <group ref={jointRef} position={jointLocal}>
+          <mesh position={lower.pos} quaternion={lower.quat}>
+            <capsuleGeometry args={[rLower, lower.len, 4, 10]} />
+            {skin}
+          </mesh>
+          {touch(touchLocal, touchRegion, touchR, "#3cffd2")}
+        </group>
+      </group>
+    );
+  };
 
   return (
     <group>
@@ -190,17 +250,11 @@ export default function HumanBody() {
         </mesh>
       </group>
 
-      {/* Miembros (se mueven con la salida motora) */}
-      {renderLimb(armL, limbs.armL)}
-      {renderLimb(armR, limbs.armR)}
-      {renderLimb(legL, limbs.legL)}
-      {renderLimb(legR, limbs.legR)}
-
-      {/* Zonas sensoriales tactiles */}
-      {touch(L.handL, "skin_hand_L", 0.6, "#3cffd2")}
-      {touch(L.handR, "skin_hand_R", 0.6, "#3cffd2")}
-      {touch(L.footL, "skin_foot_L", 0.6, "#3cffd2")}
-      {touch(L.footR, "skin_foot_R", 0.6, "#3cffd2")}
+      {/* Miembros articulados (hombro->codo->mano, cadera->rodilla->pie) */}
+      {articLimb(armLU, armLE, L.shoulderL, L.elbowL, L.handL, 0.5, 0.42, "skin_hand_L", 0.6)}
+      {articLimb(armRU, armRE, L.shoulderR, L.elbowR, L.handR, 0.5, 0.42, "skin_hand_R", 0.6)}
+      {articLimb(legLU, legLK, L.hipL, L.kneeL, L.footL, 0.72, 0.55, "skin_foot_L", 0.6)}
+      {articLimb(legRU, legRK, L.hipR, L.kneeR, L.footR, 0.72, 0.55, "skin_foot_R", 0.6)}
     </group>
   );
 }
