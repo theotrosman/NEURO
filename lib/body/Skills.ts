@@ -29,6 +29,12 @@ export class Skills {
   }
 
   // --- Efectos de la destreza sobre el cuerpo ---
+  // Cuanto del movimiento lo genera el propio cerebro (motoneuronas) frente al
+  // reflejo innato: nace conducido por el instinto (~5%) y, con la practica,
+  // pasa a conducir su cuerpo con la corteza motora que fue afinando (100%).
+  neuralWeight(): number {
+    return this.motor;
+  }
   // Velocidad util: torpe (60%) -> agil (100%).
   speedMul(): number {
     return 0.6 + 0.4 * this.motor;

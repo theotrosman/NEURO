@@ -24,11 +24,13 @@ export default function LearningPanel() {
   return (
     <Panel title="Aprendizaje">
       <div className="hint" style={{ marginTop: 4 }}>
-        El organismo aprende con la experiencia: afina el control de su cuerpo,
-        recuerda dónde hay recursos y reconecta sus sinapsis según la dopamina.
+        El organismo nace sin saber moverse: un reflejo instintivo lo guía
+        mientras su corteza motora aprende. Con cada acierto, el cerebro toma el
+        control del cuerpo, recuerda dónde hay recursos y reconecta sus sinapsis.
       </div>
 
       <Meter label="Destreza motora" v={l.motor} color="#ffd23c" />
+      <Meter label="Control neuronal del cuerpo" v={l.neural} color="#3cffd2" />
 
       <div className="stat" style={{ marginTop: 8 }}>
         <span className="k">Recursos conseguidos</span>

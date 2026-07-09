@@ -2,7 +2,7 @@ import { Network, NetworkOptions } from "../brain/Network";
 import { MotorSystem, MuscleChannel } from "../body/MotorSystem";
 import { Physiology, PhysiologyState } from "../body/Physiology";
 import { Agent, AgentState } from "../body/Agent";
-import { Environment, WorldState } from "../world/Environment";
+import { Environment, WorldState, ResourceKind } from "../world/Environment";
 import { perceive, Perception } from "../body/Senses";
 import { Plasticity } from "../brain/Plasticity";
 import { Skills } from "../body/Skills";
@@ -18,6 +18,7 @@ const REACH = 4;
 
 export interface LearningState {
   motor: number; // 0..1 destreza motora aprendida
+  neural: number; // 0..1 cuanto del movimiento genera el propio cerebro
   forageCount: number; // recursos conseguidos
   memorySites: number; // lugares recordados
   synActive: number; // sinapsis con elegibilidad viva
@@ -75,6 +76,10 @@ export class SimulationEngine {
   private manualTurn = 0;
   // Droga dopaminergica: descarga tonica exogena en el sistema de recompensa.
   dopamineLevel = 0;
+  // Reward shaping de aproximacion: recuerda la distancia a la meta del ultimo
+  // fotograma para premiar (con dopamina) el haberse acercado a ella.
+  private lastGoalDist = -1;
+  private lastWantKind: ResourceKind | null = null;
 
   constructor(opts: NetworkOptions = {}) {
     this.network = new Network(opts);
@@ -229,7 +234,9 @@ export class SimulationEngine {
       return;
     }
 
-    // --- Reflejo de orientacion + navegacion por memoria espacial ---
+    // --- Reflejo innato de orientacion + memoria espacial (ANDAMIAJE) ---
+    // Es el instinto con el que nace. Al principio manda casi todo el
+    // movimiento; a medida que el cerebro aprende, le va cediendo el control.
     const urgency =
       need === "none" ? 0.3 : Math.min(1, Math.max(p.hunger(), p.thirst()));
     // Si necesita algo pero no lo ve, consulta si RECUERDA donde conseguirlo.
@@ -237,42 +244,81 @@ export class SimulationEngine {
       !percept.sees && wantKind
         ? this.memory.recall(wantKind, agent.x, agent.z)
         : null;
-    let forward: number;
-    let turn: number;
+    let reflexForward: number;
+    let reflexTurn: number;
     if (percept.sees && wantKind) {
-      // Lo ve: gira hacia el objetivo y avanza cuando lo tiene casi de frente.
-      turn = clamp1(percept.bearing * 1.6);
-      forward = urgency * Math.max(0.15, Math.cos(percept.bearing));
+      reflexTurn = clamp1(percept.bearing * 1.6);
+      reflexForward = urgency * Math.max(0.15, Math.cos(percept.bearing));
     } else if (memSite) {
-      // No lo ve, pero recuerda un lugar: NAVEGA hacia el (ya no vaga al azar).
       const bearing = normAngle(
         Math.atan2(memSite.x - agent.x, memSite.z - agent.z) - agent.heading
       );
-      turn = clamp1(bearing * 1.6);
-      forward = urgency * Math.max(0.2, Math.cos(bearing));
+      reflexTurn = clamp1(bearing * 1.6);
+      reflexForward = urgency * Math.max(0.2, Math.cos(bearing));
     } else {
-      // Sin vista ni recuerdo: barre el entorno buscando (o deambula saciado).
-      turn = need === "none" ? Math.sin(this.world.time * 0.0004) * 0.35 : 0.5;
-      forward = need === "none" ? 0.28 : 0.32;
+      reflexTurn = need === "none" ? Math.sin(this.world.time * 0.0004) * 0.35 : 0.5;
+      reflexForward = need === "none" ? 0.28 : 0.32;
     }
 
-    // --- Aporte cortical: la salida motora del cerebro perturba la marcha
-    // (embodiment; el aprendizaje posterior reforzara lo util). ---
-    const CORTICAL = 0.6;
-    const corticalTurn = (m.armR - m.armL) * 0.5 + (m.legR - m.legL) * 0.8;
-    const corticalGo = (m.legL + m.legR) * 0.5;
-    turn = clamp1(turn + corticalTurn * CORTICAL);
-    forward = Math.min(1, forward + corticalGo * CORTICAL);
+    // --- Salida motora GENERADA POR EL CEREBRO ---
+    // Se lee de las motoneuronas de los miembros (via el sistema motor): la
+    // asimetria izquierda/derecha ordena el giro y la actividad de las piernas
+    // el avance. Al nacer es casi ruido; con el aprendizaje se vuelve movimiento
+    // intencional. ESTO es moverse "con sus propias neuronas".
+    const neuralTurn = clamp1(((m.armR + m.legR) - (m.armL + m.legL)) * 2.4);
+    const neuralForward = clamp1((m.legL + m.legR) * 1.8);
 
-    // --- Destreza motora (aprendizaje procedimental) ---
-    // Al nacer el cuerpo es torpe: lento, de giro impreciso y con temblor. Con
-    // la practica exitosa se vuelve agil, certero y estable.
+    // --- Traspaso de control: instinto -> cerebro segun la competencia motora.
+    // neuralWeight crece con la practica exitosa: el organismo pasa de moverse
+    // por reflejo a conducir su cuerpo con la corteza motora que fue afinando.
+    const w = this.skills.neuralWeight();
+    let turn = clamp1((1 - w) * reflexTurn + w * neuralTurn);
+    let forward = (1 - w) * reflexForward + w * neuralForward;
+    // Impulso homeostatico: con hambre/sed el hipotalamo mantiene la marcha de
+    // busqueda aunque la corteza motora aun no empuje (evita que se congele).
+    if (need !== "none") forward = Math.max(forward, urgency * 0.16);
+
+    // --- Torpeza motora: temblor y lentitud altos al nacer, minimos experto. ---
     const noise = this.skills.wanderNoise();
     turn = clamp1(turn * this.skills.turnMul() + (Math.random() - 0.5) * 2 * noise);
     forward = Math.min(1, Math.max(0, forward * this.skills.speedMul()));
 
     agent.setDrive(forward, turn);
     agent.integrate(simMs);
+
+    // El cerebro aprende a conducir el cuerpo hacia lo que necesita.
+    this.learnToApproach(wantKind, need, memSite, agent);
+  }
+
+  // Reward shaping: emite una pequena descarga de dopamina cada vez que el
+  // cuerpo se ACERCA al recurso que necesita. Eso le da a la regla de los tres
+  // factores un gradiente continuo de aprendizaje: refuerza las sinapsis
+  // sensorio-motoras que produjeron el acercamiento, de modo que el cerebro
+  // aprende, poco a poco, a mover el cuerpo hacia la meta (no solo a repetir lo
+  // que ya funciono en el instante de comer).
+  private learnToApproach(
+    wantKind: ResourceKind | null,
+    need: string,
+    memSite: MemorySite | null,
+    agent: Agent
+  ): void {
+    let goalDist = -1;
+    if (wantKind && need !== "none") {
+      const tgt =
+        this.world.nearest(agent.x, agent.z, wantKind) ??
+        (memSite ? { x: memSite.x, z: memSite.z } : null);
+      if (tgt) goalDist = Math.hypot(tgt.x - agent.x, tgt.z - agent.z);
+    }
+    if (goalDist >= 0 && this.lastGoalDist >= 0 && this.lastWantKind === wantKind) {
+      const delta = this.lastGoalDist - goalDist; // > 0 si se acerco
+      if (delta > 0) {
+        const approach = Math.min(0.4, delta * 0.25);
+        this.plasticity.applyReward(approach, 1);
+        this.network.stimulateRegion("substantia_nigra", approach * 12);
+      }
+    }
+    this.lastGoalDist = goalDist;
+    this.lastWantKind = wantKind;
   }
 
   // Consumir alimento: sube energia y dispara recompensa (dopamina).
@@ -314,6 +360,7 @@ export class SimulationEngine {
     const ps = this.plasticity.stats();
     return {
       motor: this.skills.motor,
+      neural: this.skills.neuralWeight(),
       forageCount: this.skills.forageCount,
       memorySites: this.memory.sites.length,
       synActive: ps.active,
