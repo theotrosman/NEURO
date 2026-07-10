@@ -24,43 +24,24 @@ function AgentRig({ children }: { children: ReactNode }) {
 }
 
 // Postura dinamica del cuerpo entero (cerebro + cuerpo juntos, para que la
-// cabeza y el cerebro reboten con el andar). Da la sensacion de peso/gravedad:
-//   - rebote vertical que sube en el apoyo medio de cada paso (2 por zancada),
-//   - balanceo lateral hacia la pierna que sostiene,
-//   - leve alabeo e inclinacion hacia adelante al caminar,
-//   - desplome relajado al dormir.
-// Todo se funde suavemente porque la intensidad (loco) ya viene suavizada del
-// motor y el "dormido" se interpola aqui.
+// cabeza y el cerebro reboten con el andar). Da la sensacion de peso/gravedad,
+// pero ya NO la dibuja: la toma directa del cuerpo neuromecanico. El rebote (el
+// centro de masa que sube en el apoyo), el balanceo hacia la pierna que
+// sostiene, la inclinacion sagital del pendulo invertido y el desplome al caer/
+// dormir son magnitudes FISICAS reales, calculadas por la gravedad y el
+// equilibrio. El render solo las aplica: el peso se siente porque existe.
 function BodyPosture({ children }: { children: ReactNode }) {
   const engine = useNeuro((s) => s.engine);
   const ref = useRef<THREE.Group>(null);
-  const slept = useRef(0);
 
   useFrame(() => {
     if (!ref.current) return;
     const g = engine?.gaitSnapshot();
-    const walk = g ? g.loco : 0;
-    const p = g ? g.phase : 0;
-    const asleep = g ? g.asleep : false;
-
-    // Rebote vertical: maximo en apoyo medio (fase 0 y pi), reposo en el choque
-    // de talon (fase pi/2, 3pi/2). Siempre >= 0: el cuerpo se impulsa hacia
-    // arriba en cada paso y nunca se hunde en el suelo.
-    const bob = 0.8 * (0.5 + 0.5 * Math.cos(2 * p)) * walk;
-    // Balanceo lateral hacia la pierna de apoyo (una vez por zancada).
-    const sway = 0.6 * Math.cos(p) * walk;
-    // Ligero alabeo acompanando el balanceo e inclinacion al avanzar.
-    const roll = -0.05 * Math.cos(p) * walk;
-    const lean = 0.07 * walk;
-
-    // Desplome suave al dormir (postura relajada, cabeza baja).
-    slept.current += ((asleep ? 1 : 0) - slept.current) * 0.05;
-    const s = slept.current;
-
-    ref.current.position.y = bob - 1.0 * s;
-    ref.current.position.x = sway;
-    ref.current.rotation.z = roll;
-    ref.current.rotation.x = lean + 0.16 * s;
+    if (!g) return;
+    ref.current.position.y = g.bob;
+    ref.current.position.x = g.sway;
+    ref.current.rotation.z = g.roll;
+    ref.current.rotation.x = g.lean;
   });
 
   return <group ref={ref}>{children}</group>;

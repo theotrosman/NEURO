@@ -49,78 +49,37 @@ export default function HumanBody() {
   const legRK = useRef<THREE.Group>(null);
   const torso = useRef<THREE.Group>(null);
 
-  // --- Ciclo de marcha: gobernado por gaitSnapshot (fase por distancia real,
-  //     intensidad de locomocion, destreza). Las piernas van en antifase, las
-  //     rodillas flexionan en la fase de balanceo, los brazos contrabalancean y
-  //     la torpeza (baja destreza) agrega temblor. En reposo se funde a una
-  //     postura de respiro con leves espasmos segun la salida motora neuronal. ---
+  // --- El cuerpo solo MUESTRA la postura fisica que produce la biomecanica
+  //     neuronal (CPG espinal + gravedad + equilibrio). No genera ningun
+  //     movimiento por su cuenta: cada angulo viene de las articulaciones reales
+  //     del aparato locomotor. Por eso ya no parece una animacion: es un cuerpo
+  //     que se sostiene, avanza y a veces se tambalea segun lo que hacen sus
+  //     impulsos nerviosos y su masa. Solo el respiro es puramente decorativo. ---
   useFrame(({ clock }) => {
-    const t = clock.getElapsedTime();
     const g = engine?.gaitSnapshot();
+    if (!g) return;
+    const t = clock.getElapsedTime();
     const m = engine?.motorSnapshot();
-
-    const walk = g ? g.loco : 0; // 0..1 cuanto camina
-    const idleW = 1 - walk;
-    const skill = g ? g.skill : 0.3;
-    const p = g ? g.phase : 0; // fase de la pierna izq. de referencia
-    const pR = p + Math.PI; // pierna derecha en antifase
-    const clumsy = (1 - skill) * walk; // temblor: alto si torpe, nulo experto
-
-    // Amplitudes articulares (radianes).
-    const hipAmp = 0.55;
-    const kneeAmp = 1.15;
-    const armAmp = 0.5;
-    const elbowBase = 0.32;
-    const elbowSwing = 0.4;
-
-    const mArmL = m?.armL ?? 0;
-    const mArmR = m?.armR ?? 0;
-    const mLegL = m?.legL ?? 0;
-    const mLegR = m?.legR ?? 0;
     const mCore = m?.core ?? 0;
 
-    // --- Muslos (cadera): balanceo adelante/atras en antifase ---
-    const legSwingL = -Math.sin(p) * hipAmp;
-    const legSwingR = -Math.sin(pR) * hipAmp;
-    const legIdleL = -mLegL * 0.45 + Math.sin(t * 1.05) * 0.02;
-    const legIdleR = -mLegR * 0.45 - Math.sin(t * 1.05) * 0.02;
-    const nLegL = clumsy * 0.18 * Math.sin(t * 8.7 + 0.5);
-    const nLegR = clumsy * 0.18 * Math.sin(t * 8.1 + 2.7);
-    if (legLU.current)
-      legLU.current.rotation.x = legSwingL * walk + legIdleL * idleW + nLegL;
-    if (legRU.current)
-      legRU.current.rotation.x = legSwingR * walk + legIdleR * idleW + nLegR;
+    // Piernas: cadera y rodilla reales (radianes) del modelo biomecanico.
+    if (legLU.current) legLU.current.rotation.x = g.hipL;
+    if (legRU.current) legRU.current.rotation.x = g.hipR;
+    if (legLK.current) legLK.current.rotation.x = g.kneeL;
+    if (legRK.current) legRK.current.rotation.x = g.kneeR;
 
-    // --- Rodillas: solo flexionan (positivo), maxima en balanceo para librar el
-    //     suelo; extendidas en apoyo. Reposo casi recto. ---
-    const kneeL = (Math.max(0, Math.cos(p)) * kneeAmp + 0.12) * walk + Math.abs(nLegL);
-    const kneeR = (Math.max(0, Math.cos(pR)) * kneeAmp + 0.12) * walk + Math.abs(nLegR);
-    if (legLK.current) legLK.current.rotation.x = kneeL;
-    if (legRK.current) legRK.current.rotation.x = kneeR;
+    // Brazos: hombro y codo reales (contrabalanceo que emerge del acoplamiento
+    // interlimb del CPG, no de un seno aparte).
+    if (armLU.current) armLU.current.rotation.x = g.shoulderL;
+    if (armRU.current) armRU.current.rotation.x = g.shoulderR;
+    if (armLE.current) armLE.current.rotation.x = g.elbowL;
+    if (armRE.current) armRE.current.rotation.x = g.elbowR;
 
-    // --- Brazos (hombro): contrabalanceo (opuesto a la pierna del mismo lado) ---
-    const armSwingL = Math.sin(p) * armAmp;
-    const armSwingR = Math.sin(pR) * armAmp;
-    const armIdleL = -mArmL * 1.0 + Math.sin(t * 1.1) * 0.05;
-    const armIdleR = -mArmR * 1.0 - Math.sin(t * 1.1) * 0.05;
-    const nArmL = clumsy * 0.15 * Math.sin(t * 7.3 + 1.1);
-    const nArmR = clumsy * 0.15 * Math.sin(t * 7.9 + 3.4);
-    if (armLU.current)
-      armLU.current.rotation.x = armSwingL * walk + armIdleL * idleW + nArmL;
-    if (armRU.current)
-      armRU.current.rotation.x = armSwingR * walk + armIdleR * idleW + nArmR;
-
-    // --- Codos: siempre algo flexionados; mas cuando el brazo va adelante ---
-    const elbowL = elbowBase + Math.max(0, -armSwingL / armAmp) * elbowSwing * walk;
-    const elbowR = elbowBase + Math.max(0, -armSwingR / armAmp) * elbowSwing * walk;
-    if (armLE.current) armLE.current.rotation.x = -elbowL;
-    if (armRE.current) armRE.current.rotation.x = -elbowR;
-
-    // --- Torso: respira y gira levemente al contrario del paso ---
+    // Torso: respira (decorativo) y acompaña con un leve giro el vaiven del peso.
     if (torso.current) {
       const breathe = 1 + Math.sin(t * 1.6) * 0.012 + mCore * 0.04;
       torso.current.scale.set(1, breathe, 1);
-      torso.current.rotation.y = Math.sin(p) * 0.1 * walk;
+      torso.current.rotation.y = Math.max(-0.16, Math.min(0.16, g.sway * 0.12));
     }
   });
 

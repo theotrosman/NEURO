@@ -42,6 +42,24 @@ export class Agent {
     const targetSpeed = this.forwardDrive * MAX_SPEED;
     this.speed += (targetSpeed - this.speed) * Math.min(1, dt * 4);
 
+    this.advance(dt);
+  }
+
+  // Traslacion gobernada por la LOCOMOCION FISICA: la velocidad no la fija una
+  // pulsion abstracta, sino el empuje real del apoyo que produce el aparato
+  // locomotor neuromecanico (paso a paso). Asi el avance y la zancada son el
+  // mismo proceso y los pies no patinan. `turn` sigue orientando el cuerpo.
+  applyLocomotion(groundSpeed: number, turn: number, dtMs: number): void {
+    const dt = dtMs / 1000;
+    if (dt <= 0) return;
+    this.turnDrive = Math.max(-1, Math.min(1, turn));
+    this.heading += this.turnDrive * TURN_RATE * dt;
+    const target = Math.max(-MAX_SPEED, Math.min(MAX_SPEED, groundSpeed));
+    this.speed += (target - this.speed) * Math.min(1, dt * 6);
+    this.advance(dt);
+  }
+
+  private advance(dt: number): void {
     // Avanzar en la direccion de mirada.
     this.x += Math.sin(this.heading) * this.speed * dt;
     this.z += Math.cos(this.heading) * this.speed * dt;

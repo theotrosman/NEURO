@@ -1,5 +1,7 @@
 import { Network, NetworkOptions } from "../brain/Network";
 import { MotorSystem, MuscleChannel } from "../body/MotorSystem";
+import { Locomotion, LocoCommand, GaitPose, Proprioception } from "../body/Locomotion";
+import { ProprioceptiveSystem } from "../body/Proprioception";
 import { Physiology, PhysiologyState } from "../body/Physiology";
 import { Agent, AgentState } from "../body/Agent";
 import { Environment, WorldState, ResourceKind } from "../world/Environment";
@@ -16,11 +18,6 @@ const SPAWN_BUDGET = 70;
 // A que distancia (unidades) el cuerpo alcanza y consume un recurso.
 const REACH = 4;
 
-// Distancia recorrida (unidades) por cada ciclo completo de marcha (dos pasos).
-// La fase del andar avanza con la distancia REAL, no con el reloj, de modo que
-// los pies no "patinan": el ciclo de piernas va sincronizado con el avance.
-const STRIDE_LEN = 8.5;
-
 export interface LearningState {
   motor: number; // 0..1 destreza motora aprendida
   neural: number; // 0..1 cuanto del movimiento genera el propio cerebro
@@ -31,14 +28,25 @@ export interface LearningState {
   enabled: boolean;
 }
 
-// Estado de la marcha, para animar el cuerpo de forma verosimil (paso, balanceo,
-// flexion de rodillas). La fase avanza con la distancia recorrida.
+// Estado de la marcha para renderizar el cuerpo. Ya NO es una animacion: son los
+// angulos y magnitudes REALES que produce la biomecanica neuronal (CPG + fisica).
 export interface GaitState {
-  phase: number; // 0..2π, fase del ciclo de marcha (pierna izq. de referencia)
-  loco: number; // 0..1 intensidad de locomocion, suavizada
-  skill: number; // 0..1 destreza motora: modula lo suave/torpe del andar
+  phase: number; // 0..2π, fase del ciclo de marcha (referencia visual)
+  loco: number; // 0..1 intensidad de locomocion efectiva
+  skill: number; // 0..1 destreza motora aprendida
   speed: number; // unidades/seg actuales
-  asleep: boolean; // dormido -> sin marcha
+  asleep: boolean; // dormido
+  // Postura fisica real (radianes, listos para el render) del cuerpo neuromecanico.
+  hipL: number; kneeL: number;
+  hipR: number; kneeR: number;
+  shoulderL: number; shoulderR: number;
+  elbowL: number; elbowR: number;
+  lean: number; // inclinacion sagital (equilibrio / pendulo invertido)
+  roll: number; // balanceo lateral
+  bob: number; // rebote vertical del centro de masa
+  sway: number; // desplazamiento lateral del peso
+  contactL: number; contactR: number; // carga plantar 0..1
+  fallen: number; // 0..1 desplomado (caido / dormido / muerto)
 }
 
 // Estado de los neuromoduladores globales ("drogas"). 1 = neutro.
@@ -51,6 +59,10 @@ export interface NeuromodState {
 
 function clamp1(x: number): number {
   return x < -1 ? -1 : x > 1 ? 1 : x;
+}
+
+function clamp01(x: number): number {
+  return x < 0 ? 0 : x > 1 ? 1 : x;
 }
 
 function normAngle(a: number): number {
@@ -96,12 +108,12 @@ export class SimulationEngine {
   private lastGoalDist = -1;
   private lastWantKind: ResourceKind | null = null;
 
-  // --- Marcha (para la animacion del cuerpo) ---
-  // Fase del ciclo de andar; avanza con la distancia recorrida por el cuerpo.
-  gaitPhase = 0;
-  private gaitLoco = 0; // intensidad de locomocion suavizada
-  private prevAgentX = 0;
-  private prevAgentZ = 0;
+  // --- Locomocion neuromecanica: el cuerpo fisico (huesos/musculos/gravedad) y
+  //     su lazo sensitivo-motor. La marcha EMERGE de aqui, no de una animacion. ---
+  body: Locomotion;
+  private proprio: ProprioceptiveSystem;
+  private gaitPose: GaitPose;
+  private proprioState: Proprioception;
 
   constructor(opts: NetworkOptions = {}) {
     this.network = new Network(opts);
@@ -115,6 +127,11 @@ export class SimulationEngine {
     this.plasticity = new Plasticity(this.network);
     this.skills = new Skills();
     this.memory = new SpatialMemory();
+    // Cuerpo neuromecanico + propiocepcion (cierra el lazo cerebro<->cuerpo).
+    this.body = new Locomotion();
+    this.proprio = new ProprioceptiveSystem(this.network);
+    this.gaitPose = this.body.pose();
+    this.proprioState = this.body.proprioception();
   }
 
   // Avanza `steps` pasos de simulacion (cada uno DT ms).
@@ -213,18 +230,22 @@ export class SimulationEngine {
       else this.giveWater();
     }
 
-    // --- Fase de marcha: avanza con la distancia REAL recorrida este fotograma
-    // (asi las piernas van sincronizadas con el avance y los pies no patinan).
-    const dx = this.agent.x - this.prevAgentX;
-    const dz = this.agent.z - this.prevAgentZ;
-    this.prevAgentX = this.agent.x;
-    this.prevAgentZ = this.agent.z;
-    const disp = Math.hypot(dx, dz);
-    this.gaitPhase =
-      (this.gaitPhase + (disp / STRIDE_LEN) * Math.PI * 2) % (Math.PI * 2);
-    // Intensidad de locomocion suavizada (para fundir entre reposo y marcha).
-    const targetLoco = Math.min(1, this.agent.speed / 5);
-    this.gaitLoco += (targetLoco - this.gaitLoco) * Math.min(1, simMs / 130);
+    // --- APRENDER A CAMINAR ---
+    // Avanzar erguido sin caerse es, en si mismo, una recompensa motora: el
+    // cuerpo afina su propio control postural con la practica, como un humano que
+    // pasa de tambalearse a caminar. Caerse lo hace retroceder. La destreza que
+    // se gana aqui realimenta el vigor y el equilibrio del propio aparato
+    // locomotor (mejor paso, menos caidas) -> se ve APRENDER a usar el cuerpo.
+    const g = this.gaitPose;
+    if (p.alive && !p.asleep) {
+      const upright = Math.max(0, 1 - Math.abs(g.lean) * 1.8) * (1 - g.fallen);
+      const quality = g.loco * upright;
+      const dSkill = quality * 0.0009 - (g.fallen > 0.5 ? 0.0025 : 0);
+      this.skills.motor = Math.max(0.05, Math.min(1, this.skills.motor + dSkill * (simMs / 10)));
+      // Refuerzo intrinseco de la locomocion competente (entrena los circuitos
+      // motores aunque todavia no haya comido: caminar bien ya "sabe bien").
+      if (quality > 0.25) this.plasticity.applyReward(quality * 0.05, 1);
+    }
   }
 
   // Percepcion del entorno + reflejo innato de orientacion (nivel tectal/tronco,
@@ -236,9 +257,9 @@ export class SimulationEngine {
     const agent = this.agent;
     const net = this.network;
 
+    // Muerto: el cuerpo pierde el control postural y se desploma.
     if (!p.alive) {
-      agent.setDrive(0, 0);
-      agent.integrate(simMs);
+      this.locomote(simMs, 0, 0, m, false, false);
       return;
     }
 
@@ -254,18 +275,17 @@ export class SimulationEngine {
     net.stimulateRegion("retina_L", percept.leftEye * VIS + percept.brightness * 0.8);
     net.stimulateRegion("retina_R", percept.rightEye * VIS + percept.brightness * 0.8);
 
-    // Dormido: el cuerpo no camina (el metabolismo y la recuperacion continuan).
+    // Dormido: no camina (metabolismo y recuperacion siguen); postura relajada.
     if (p.asleep) {
-      agent.setDrive(0, 0);
-      agent.integrate(simMs);
+      this.locomote(simMs, 0, 0, m, true, true);
       return;
     }
 
     // --- Control manual (experimento): el usuario toma el volante y anula el
-    // reflejo. El cerebro sigue percibiendo y activo; solo la marcha la mandas tu.
+    // reflejo. El cerebro sigue percibiendo y activo; el aparato locomotor
+    // neuromecanico ejecuta el andar que le pides (con su fisica y equilibrio).
     if (this.manualControl) {
-      agent.setDrive(this.manualForward, this.manualTurn);
-      agent.integrate(simMs);
+      this.locomote(simMs, this.manualForward, this.manualTurn, m, false, true);
       return;
     }
 
@@ -317,13 +337,72 @@ export class SimulationEngine {
     // --- Torpeza motora: temblor y lentitud altos al nacer, minimos experto. ---
     const noise = this.skills.wanderNoise();
     turn = clamp1(turn * this.skills.turnMul() + (Math.random() - 0.5) * 2 * noise);
-    forward = Math.min(1, Math.max(0, forward * this.skills.speedMul()));
+    // El avance NO se penaliza aqui por destreza: la torpeza del recien nacido ya
+    // vive en el vigor/equilibrio del aparato locomotor (vigor bajo, mas caidas).
+    // Doblar la penalizacion aqui lo dejaba tan lento que se moria de hambre.
+    forward = Math.min(1, Math.max(0, forward));
 
-    agent.setDrive(forward, turn);
-    agent.integrate(simMs);
+    // El deseo de marcha (giro + avance) baja al aparato locomotor neuromecanico:
+    // el CPG espinal genera el ritmo, la fisica lo convierte en pasos y el empuje
+    // del apoyo traslada el cuerpo. NADA de esto es una animacion prefijada.
+    this.locomote(simMs, forward, turn, m, false, true);
 
     // El cerebro aprende a conducir el cuerpo hacia lo que necesita.
     this.learnToApproach(wantKind, need, memSite, agent);
+  }
+
+  // --- Aparato locomotor neuromecanico ---
+  // Traduce la intencion motora (giro + avance) en marcha REAL: alimenta el CPG
+  // espinal (drive descendente + señal cortical de cada pierna), integra la
+  // fisica del cuerpo bajo gravedad, devuelve la propiocepcion al cerebro y
+  // traslada el cuerpo por el empuje del apoyo. La destreza y el estado neural
+  // (fatiga, lesiones, quimica) modulan vigor y equilibrio: por eso se ve
+  // aprender a caminar, tambalearse ebrio o desplomarse anestesiado.
+  private locomote(
+    simMs: number,
+    forward: number,
+    turn: number,
+    m: Record<MuscleChannel, number>,
+    asleep: boolean,
+    alive: boolean
+  ): void {
+    const p = this.physiology;
+    const skill = this.skills.motor;
+    // Vigor: debil y torpe al nacer y con fatiga; pleno experto y descansado.
+    const vigor = clamp01((0.58 + 0.42 * skill) * (1 - p.tiredness() * 0.4));
+    // Integridad del reflejo de equilibrio: la afina la destreza; la degradan
+    // las lesiones de cerebelo/tronco y los depresores/anestesia.
+    const balance = clamp01(this.balanceIntegrity() * (0.55 + 0.45 * skill));
+
+    const cmd: LocoCommand = {
+      desiredLoco: clamp01(Math.abs(forward)),
+      turn,
+      balance,
+      vigor,
+      asleep,
+      alive,
+    };
+    this.body.step(simMs / 1000, cmd, m);
+    this.gaitPose = this.body.pose();
+    this.proprioState = this.body.proprioception();
+    // Cerrar el lazo: el cuerpo le habla al cerebro (propiocepcion + vestibular).
+    this.proprio.inject(this.proprioState);
+    // Traslacion por el empuje real del apoyo (paso == avance, sin patinar).
+    this.agent.applyLocomotion(this.gaitPose.groundSpeed, turn, simMs);
+  }
+
+  // Integridad del reflejo de equilibrio segun el estado neural (0..1). Es la
+  // via por la que el CEREBRO gobierna la postura: sin cerebelo/tronco, o bajo
+  // depresores, el enderezamiento falla y el cuerpo se tambalea o cae.
+  private balanceIntegrity(): number {
+    let b = 1;
+    if (this.network.isLesioned("cerebellum")) b *= 0.35;
+    if (this.network.isLesioned("brainstem")) b *= 0.3;
+    // Quimica global: mucha inhibicion (alcohol/benzo/anestesia) tambalea; ruido
+    // alto (psicodelicos) descoordina el enderezamiento.
+    b *= clamp01(1.15 - (this.network.inhibition - 1) * 0.5);
+    b *= clamp01(1.1 - (this.network.noiseScale - 1) * 0.15);
+    return clamp01(b);
   }
 
   // Reward shaping: emite una pequena descarga de dopamina cada vez que el
@@ -481,14 +560,23 @@ export class SimulationEngine {
     return this.motor.snapshot();
   }
 
-  // Estado de la marcha para animar el cuerpo (fase del paso, intensidad, destreza).
+  // Postura fisica del cuerpo neuromecanico para el render (angulos reales, no
+  // una curva de animacion): la produce el CPG + la biomecanica cada paso.
   gaitSnapshot(): GaitState {
+    const g = this.gaitPose;
     return {
-      phase: this.gaitPhase,
-      loco: this.gaitLoco,
+      phase: g.phase,
+      loco: g.loco,
       skill: this.skills.motor,
       speed: this.agent.speed,
       asleep: this.physiology.asleep,
+      hipL: g.hipL, kneeL: g.kneeL,
+      hipR: g.hipR, kneeR: g.kneeR,
+      shoulderL: g.shoulderL, shoulderR: g.shoulderR,
+      elbowL: g.elbowL, elbowR: g.elbowR,
+      lean: g.lean, roll: g.roll, bob: g.bob, sway: g.sway,
+      contactL: g.contactL, contactR: g.contactR,
+      fallen: g.fallen,
     };
   }
 
