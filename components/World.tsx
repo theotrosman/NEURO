@@ -1,10 +1,103 @@
 "use client";
 
-import { useRef } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { useNeuro } from "./store";
-import { ARENA_R, GROUND_Y } from "../lib/world/Environment";
+import { ARENA_R, GROUND_Y, Tree } from "../lib/world/Environment";
+
+// ----------------------------------------------------------------------------
+//  BOSQUE
+//  Arboles instanciados (un solo draw call para troncos y otro para copas) para
+//  no castigar los 60fps que ya cuestan las ~6000 neuronas. Son escenografia
+//  fija: se calculan sus matrices una vez. Su altura esta pensada en relacion al
+//  cuerpo humano (30u): un arbol adulto ronda 45-70u, mas alto que el organismo,
+//  para que el mundo se sienta un bosque y no un cesped con palitos.
+// ----------------------------------------------------------------------------
+function Forest({ trees }: { trees: Tree[] }) {
+  const trunkRef = useRef<THREE.InstancedMesh>(null);
+  const canopyRef = useRef<THREE.InstancedMesh>(null);
+
+  const trunkGeo = useMemo(() => {
+    // Fuste esbelto pero alto. Como el bosque vive lejos (r>=48u), no tapa al
+    // organismo; su altura da verticalidad al horizonte.
+    const g = new THREE.CylinderGeometry(0.5, 1.0, 46, 6);
+    g.translate(0, 23, 0); // base apoyada en el suelo del grupo
+    return g;
+  }, []);
+  const canopyGeo = useMemo(() => {
+    // Copa amplia y alta, para que la espesura lejana lea como una masa de
+    // follaje que cierra el horizonte por encima de la cabeza (~15u).
+    const g = new THREE.IcosahedronGeometry(12, 1);
+    g.translate(0, 52, 0); // copa sobre el tronco
+    return g;
+  }, []);
+
+  useLayoutEffect(() => {
+    const trunk = trunkRef.current;
+    const canopy = canopyRef.current;
+    if (!trunk || !canopy) return;
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const up = new THREE.Vector3(0, 1, 0);
+    const pos = new THREE.Vector3();
+    const scl = new THREE.Vector3();
+    const col = new THREE.Color();
+    trees.forEach((t, i) => {
+      q.setFromAxisAngle(up, t.rot);
+      pos.set(t.x, GROUND_Y, t.z);
+      // Variacion de altura para que no sean clones: mas alto con tint alto,
+      // pero suave (evita arboles achaparrados o desmesurados).
+      scl.set(t.scale, t.scale * (0.92 + t.tint * 0.22), t.scale);
+      m.compose(pos, q, scl);
+      trunk.setMatrixAt(i, m);
+      canopy.setMatrixAt(i, m);
+      // Follaje entre verde profundo y verde-azulado fosforescente (hacia el
+      // cyan del agua), como una espesura bioluminiscente que cierra el mundo.
+      col.setHSL(0.3 + t.tint * 0.18, 0.6, 0.35 + t.tint * 0.1);
+      canopy.setColorAt(i, col);
+    });
+    trunk.instanceMatrix.needsUpdate = true;
+    canopy.instanceMatrix.needsUpdate = true;
+    if (canopy.instanceColor) canopy.instanceColor.needsUpdate = true;
+  }, [trees]);
+
+  if (!trees.length) return null;
+  return (
+    <group>
+      <instancedMesh
+        ref={trunkRef}
+        args={[trunkGeo, undefined, trees.length]}
+        frustumCulled={false}
+        castShadow={false}
+      >
+        <meshStandardMaterial
+          color="#4a3729"
+          roughness={0.9}
+          metalness={0.04}
+          emissive="#241a10"
+          emissiveIntensity={0.5}
+        />
+      </instancedMesh>
+      <instancedMesh
+        ref={canopyRef}
+        args={[canopyGeo, undefined, trees.length]}
+        frustumCulled={false}
+        castShadow={false}
+      >
+        <meshStandardMaterial
+          roughness={0.65}
+          metalness={0.05}
+          emissive="#0e3a20"
+          emissiveIntensity={0.55}
+          flatShading
+          transparent
+          opacity={0.94}
+        />
+      </instancedMesh>
+    </group>
+  );
+}
 
 const FOOD_COLOR = "#3cff8a";
 const WATER_COLOR = "#4ad0ff";
@@ -104,6 +197,9 @@ export default function World() {
         <ringGeometry args={[ARENA_R - 1, ARENA_R, 96]} />
         <meshBasicMaterial color="#2b4790" transparent opacity={0.5} />
       </mesh>
+
+      {/* Bosque: arboles instanciados que enmarcan la escena */}
+      <Forest trees={engine.world.trees} />
 
       {/* Recursos: comida (verde) y agua (azul), con baliza de luz */}
       {resources.map((r, i) => {

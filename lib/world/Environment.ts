@@ -13,6 +13,17 @@ export interface Resource {
   respawnAt: number; // ms de mundo en que vuelve a estar disponible
 }
 
+// Un arbol del bosque. Es escenografia fija (no se mueve) pero forma parte del
+// modelo del mundo para ser reproducible por semilla y servir de referencia
+// espacial: da un "aqui" con textura, no un vacio abstracto.
+export interface Tree {
+  x: number;
+  z: number;
+  scale: number; // tamaño relativo (~0.7 a 1.5)
+  rot: number; // giro en Y
+  tint: number; // 0..1, variacion de color/forma del follaje
+}
+
 export interface WorldState {
   resources: Resource[];
   dayPhase: number; // 0..1 (0 amanecer, 0.5 atardecer, ~0.75 medianoche)
@@ -42,6 +53,7 @@ class LCG {
 
 export class Environment {
   resources: Resource[] = [];
+  trees: Tree[] = [];
   time = 0;
   private rng: LCG;
   private nextId = 0;
@@ -51,6 +63,30 @@ export class Environment {
     // Siembra inicial: mas comida que agua, dispersas por el anillo exterior.
     for (let i = 0; i < 7; i++) this.spawn("food");
     for (let i = 0; i < 5; i++) this.spawn("water");
+    this.seedForest();
+  }
+
+  // Siembra el bosque como una ESPESURA que rodea el prado, en el anillo
+  // exterior r in [48, 58]. La clave es que ese radio queda POR FUERA de la
+  // orbita tipica de la camara (~45u): asi, cuando la camara mira hacia el
+  // organismo en el centro, cada tronco cae al fondo o al costado y NUNCA se
+  // interpone entre la camara y el cuerpo (el forrajeo vive en r<28, un prado
+  // despejado). Los arboles se difuminan en la niebla (que arranca a 55u), como
+  // un bosque que cierra el horizonte. La distribucion sqrt reparte densidad
+  // uniforme por area.
+  private seedForest(): void {
+    const N = 64;
+    for (let i = 0; i < N; i++) {
+      const a = this.rng.next() * Math.PI * 2;
+      const r = Math.sqrt(this.rng.range(48 * 48, (ARENA_R - 2) * (ARENA_R - 2)));
+      this.trees.push({
+        x: Math.cos(a) * r,
+        z: Math.sin(a) * r,
+        scale: this.rng.range(0.72, 1.5),
+        rot: this.rng.next() * Math.PI * 2,
+        tint: this.rng.next(),
+      });
+    }
   }
 
   private randPos(): [number, number] {
