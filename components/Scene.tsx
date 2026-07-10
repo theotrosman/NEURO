@@ -1,11 +1,11 @@
 "use client";
 
-import { ReactNode, useRef } from "react";
+import { ReactNode, Suspense, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import BrainView from "./BrainView";
-import HumanBody from "./HumanBody";
+import HumanMesh from "./HumanMesh";
 import World from "./World";
 import { useNeuro } from "./store";
 
@@ -103,7 +103,9 @@ export default function Scene() {
       <AgentRig>
         <BodyPosture>
           <BrainView />
-          <HumanBody />
+          <Suspense fallback={null}>
+            <HumanMesh />
+          </Suspense>
         </BodyPosture>
       </AgentRig>
 
